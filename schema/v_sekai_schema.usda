@@ -1,0 +1,158 @@
+#usda 1.0
+(
+    """
+    V-Sekai USD codeless API schemas.
+
+    Defines three single-apply API schemas carrying V-Sekai-specific data
+    that core USD does not model natively: MToon shader uniforms,
+    spring-bone simulation parameters, and spring-bone colliders.
+
+    All three classes set `skipCodeGeneration = true` so the schema loads
+    through the generic UsdAttribute / UsdPrim.ApplyAPI() API and avoids
+    the ABI trap between Blender's bundled USD, Unity's bundled USD, and
+    the build idtx-flow links against.
+
+    See CHI-250 (design) and CHI-251 (cross-engine implementation).
+
+    Copyright 2026 The openusd-fabric authors.
+    SPDX-License-Identifier: MIT
+    """
+    subLayers = [
+    ]
+)
+
+over "GLOBAL" (
+    customData = {
+        string libraryName = "vSekaiUsd"
+        string libraryPath  = "."
+        string libraryPrefix = "VSekai"
+        bool skipCodeGeneration = true
+        bool useLiteralIdentifier = false
+    }
+)
+{
+}
+
+class "VSekaiMToonAPI" (
+    inherits = </APISchemaBase>
+    customData = {
+        token apiSchemaType = "singleApply"
+        bool skipCodeGeneration = true
+    }
+    doc = """API schema carrying MToon shader uniforms from V-Sekai materials.
+
+    Applied to UsdShade Material prims (or their primary surface Shader child).
+    Attribute names follow the VRM 1.0 MToon convention so the Blender hook,
+    idtx-flow's Godot mapper, and the Unity schema mapper agree on the wire
+    representation without a translation layer."""
+)
+{
+    color3f v_sekai:mtoon:shadeColorFactor = (1.0, 1.0, 1.0) (
+        doc = "Shade colour (tinted region in toon shading)."
+    )
+    asset v_sekai:mtoon:shadeMultiplyTexture = @@ (
+        doc = "Optional shade-region texture multiplied with shadeColorFactor."
+    )
+    float v_sekai:mtoon:shadingShiftFactor = 0.0 (
+        doc = "Shading shift along the lighting axis; range [-1, 1]."
+    )
+    float v_sekai:mtoon:shadingToonyFactor = 0.9 (
+        doc = "Sharpness of the lit/shade boundary; range [0, 1]."
+    )
+    color3f v_sekai:mtoon:rimColorFactor = (0.0, 0.0, 0.0) (
+        doc = "Rim-light colour."
+    )
+    asset v_sekai:mtoon:rimMultiplyTexture = @@
+    float v_sekai:mtoon:rimLightingMixFactor = 0.0 (
+        doc = "Mix between scene lighting and constant rim; range [0, 1]."
+    )
+    asset v_sekai:mtoon:matcapTexture = @@ (
+        doc = "Matcap texture sampled by view-space normal."
+    )
+    color3f v_sekai:mtoon:matcapFactor = (1.0, 1.0, 1.0)
+    token v_sekai:mtoon:outlineWidthMode = "none" (
+        allowedTokens = ["none", "worldCoordinates", "screenCoordinates"]
+        doc = "Outline projection space, or none to disable the outline pass."
+    )
+    float v_sekai:mtoon:outlineWidthFactor = 0.0 (
+        doc = "Outline thickness in the chosen mode's units."
+    )
+    color3f v_sekai:mtoon:outlineColorFactor = (0.0, 0.0, 0.0)
+    float v_sekai:mtoon:outlineLightingMixFactor = 1.0
+    float v_sekai:mtoon:giEqualizationFactor = 0.9 (
+        doc = "Tonemap of ambient/global-illumination contribution; range [0, 1]."
+    )
+    bool v_sekai:mtoon:transparentWithZWrite = false (
+        doc = "If true, transparent surface writes depth (sharper sorting)."
+    )
+}
+
+class "VSekaiSpringBoneAPI" (
+    inherits = </APISchemaBase>
+    customData = {
+        token apiSchemaType = "singleApply"
+        bool skipCodeGeneration = true
+    }
+    doc = """API schema marking a joint as the root of a spring-bone chain.
+
+    Carries the VRM 1.0 springbone parameters. Collider references are
+    expressed as USD relationships into prims that themselves have
+    VSekaiSpringBoneColliderAPI applied; this is the same indirection VRM
+    1.0 uses (colliderGroups → colliders) and lets a chain reference
+    colliders parented outside its own subtree."""
+)
+{
+    float v_sekai:springBone:stiffness = 1.0 (
+        doc = "Per-step pull toward rest pose; range [0, 1]."
+    )
+    float v_sekai:springBone:drag = 0.4 (
+        doc = "Velocity damping per step; range [0, 1]."
+    )
+    float v_sekai:springBone:gravityPower = 0.0 (
+        doc = "Scalar gravity magnitude; positive accelerates along gravityDir."
+    )
+    vector3f v_sekai:springBone:gravityDir = (0.0, -1.0, 0.0) (
+        doc = "World-space gravity direction (need not be unit length)."
+    )
+    float v_sekai:springBone:hitRadius = 0.02 (
+        doc = "Per-joint collision radius in metres."
+    )
+    rel v_sekai:springBone:center (
+        doc = "Optional centre transform; chain motion is computed relative to it."
+    )
+    rel v_sekai:springBone:colliders (
+        doc = "Array of relationships to VSekaiSpringBoneColliderAPI prims."
+    )
+}
+
+class "VSekaiSpringBoneColliderAPI" (
+    inherits = </APISchemaBase>
+    customData = {
+        token apiSchemaType = "singleApply"
+        bool skipCodeGeneration = true
+    }
+    doc = """API schema marking a joint as a spring-bone collider.
+
+    Shape selects sphere, capsule, or plane; the remaining attributes are
+    interpreted per shape:
+      sphere : offset + radius
+      capsule: offset + tail + radius
+      plane  : offset + normal
+    `inside` flips collision sense (used for chest/skirt cavities)."""
+)
+{
+    token v_sekai:springBone:collider:shape = "sphere" (
+        allowedTokens = ["sphere", "capsule", "plane"]
+    )
+    float v_sekai:springBone:collider:radius = 0.05
+    vector3f v_sekai:springBone:collider:offset = (0.0, 0.0, 0.0)
+    vector3f v_sekai:springBone:collider:tail = (0.0, 0.0, 0.0) (
+        doc = "Capsule tail offset (ignored for sphere/plane)."
+    )
+    vector3f v_sekai:springBone:collider:normal = (0.0, 1.0, 0.0) (
+        doc = "Plane normal (ignored for sphere/capsule)."
+    )
+    bool v_sekai:springBone:collider:inside = false (
+        doc = "Invert collision direction (chest/skirt-cavity colliders)."
+    )
+}
