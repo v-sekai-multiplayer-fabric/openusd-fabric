@@ -29,6 +29,8 @@ open Fabric
 private def artifacts : List (String × String) :=
   [ ( "schema/spring_bone_ranges_validator.py"
     , Fabric.Schema.SpringBoneRanges.pythonValidatorSource )
+  , ( "maps/scss_mtoon_map.json"
+    , Fabric.VrmUpgrade.ScssMToon.jsonSource )
   ]
 
 def main (args : List String) : IO UInt32 := do
