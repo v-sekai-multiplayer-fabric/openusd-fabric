@@ -11,3 +11,5 @@
 -- map land as the CHI-252 design comments stabilise.
 
 import Fabric.VrmUpgrade.ScssMToon
+import Fabric.VrmUpgrade.HumanoidBones
+import Fabric.VrmUpgrade.SpringBoneFields

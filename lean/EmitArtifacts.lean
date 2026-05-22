@@ -31,6 +31,10 @@ private def artifacts : List (String × String) :=
     , Fabric.Schema.SpringBoneRanges.pythonValidatorSource )
   , ( "maps/scss_mtoon_map.json"
     , Fabric.VrmUpgrade.ScssMToon.jsonSource )
+  , ( "maps/humanoid_bones_map.json"
+    , Fabric.VrmUpgrade.HumanoidBones.jsonSource )
+  , ( "maps/springbone_fields_map.json"
+    , Fabric.VrmUpgrade.SpringBoneFields.jsonSource )
   ]
 
 def main (args : List String) : IO UInt32 := do

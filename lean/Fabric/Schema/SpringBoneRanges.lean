@@ -47,6 +47,6 @@ def is_valid_spring_bone(stiffness, drag, gravity_power, hit_radius):
 -- matches what the emit step writes to disk. Replace this with the real
 -- native_decide proof once EmitArtifacts.lean is wired to compute the
 -- source. Tracked as a TODO so CI does not silently regress.
-example : pythonValidatorSource.length > 0 := by decide
+example : pythonValidatorSource.length > 0 := by native_decide
 
 end Fabric.Schema.SpringBoneRanges

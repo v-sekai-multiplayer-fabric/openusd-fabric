@@ -104,6 +104,14 @@ structure MToonParams where
 def applyScssShadowToColour (c : Float) (shadow : Float) : Float :=
   c * (1.0 - shadow * 0.5)
 
+/-- Inverse of applyScssShadowToColour with shadow held at the reverse
+    pin (0.5). Clamped to [0, 1] so an MToon shade > 0.75 still produces
+    a representable SCSS shadowMaskColor (the surplus would be encoded
+    by lowering SCSS `_Shadow` below 0.5, but the reverse pins it). -/
+def invertScssShadowToColour (m : Float) : Float :=
+  let v := m / 0.75
+  if v > 1.0 then 1.0 else v
+
 /-- SCSS `_FresnelWidth` (Range 0..20) is an unbounded SCSS-specific
     "rim spread" knob; MToon's `parametricRimFresnelPowerFactor` is the
     Fresnel exponent. Map by inverse-square heuristic clamped sensibly:
@@ -178,9 +186,9 @@ def mToonToScss (m : MToonParams) : ScssParams :=
   , colorG := m.baseColorG
   , colorB := m.baseColorB
   , colorA := m.baseColorA
-  , shadowMaskColorR := m.shadeColorR
-  , shadowMaskColorG := m.shadeColorG
-  , shadowMaskColorB := m.shadeColorB
+  , shadowMaskColorR := invertScssShadowToColour m.shadeColorR
+  , shadowMaskColorG := invertScssShadowToColour m.shadeColorG
+  , shadowMaskColorB := invertScssShadowToColour m.shadeColorB
   , shadow := 0.5
   , shadowLift := m.shadingShift
   , fresnelTintR := m.parametricRimR
