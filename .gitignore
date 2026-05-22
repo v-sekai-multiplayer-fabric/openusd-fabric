@@ -9,8 +9,13 @@ venv/
 *.usdc
 generatedSchema.usda
 
+# Build outputs (slangc -> GLSL, CMake, pixi)
+build/
+.pixi/
+
 # Editor / OS noise
 .DS_Store
 Thumbs.db
 .vscode/
 .idea/
+pixi-install.log

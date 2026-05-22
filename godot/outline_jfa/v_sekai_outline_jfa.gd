@@ -23,6 +23,9 @@
 class_name VSekaiOutlineJFA
 extends CompositorEffect
 
+# GLSL kernels are emitted by `pixi run -e slang emit-shader-glsl` from
+# the .slang sources under shaders/outline_jfa/. Project packaging copies
+# the resulting build/shaders/outline_jfa/ into this res:// path.
 const SHADER_DIR := "res://addons/openusd_fabric/outline_jfa/"
 const MAX_OUTLINE_WIDTH_PX := 64
 const LOCAL_SIZE := 8

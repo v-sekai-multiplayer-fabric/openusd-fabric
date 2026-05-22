@@ -1,0 +1,38 @@
+[workspace]
+name = "openusd-fabric"
+version = "0.1.0"
+description = "V-Sekai OpenUSD interchange pipeline"
+authors = ["The openusd-fabric authors"]
+channels = ["conda-forge"]
+platforms = ["win-64", "linux-64", "osx-arm64"]
+
+[dependencies]
+openusd = ">=25.05"
+cmake = ">=3.28"
+ninja = ">=1.11"
+python = "3.11.*"
+numpy = ">=1.26"
+hypothesis = ">=6.100"
+pytest = "*"
+
+[target.win-64.dependencies]
+vs2022_win-64 = "*"
+
+[target.linux-64.dependencies]
+gxx = ">=12"
+
+[target.osx-arm64.dependencies]
+cxx-compiler = "*"
+
+[tasks]
+# Slang -> GLSL: regenerates the GLSL strings embedded in the Hydra task
+# and the GDScript-loaded resources from shaders/outline_jfa/*.slang.
+# Requires slangc on PATH (download from https://github.com/shader-slang/slang/releases;
+# not on conda-forge yet). CI runs this + diffs against the embedded
+# bytes to catch drift between the .slang source-of-truth and the
+# shipped GLSL.
+emit-shader-glsl = { cmd = "python scripts/emit_shader_glsl.py", env = { OUTLINE_JFA_SRC = "shaders/outline_jfa", OUTLINE_JFA_OUT = "build/shaders/outline_jfa" } }
+configure-hydra-jfa = { cmd = "cmake -S hydra/HdVSekaiOutlineJFA -B hydra/HdVSekaiOutlineJFA/build -G Ninja -DCMAKE_BUILD_TYPE=Release" }
+build-hydra-jfa = { cmd = "cmake --build hydra/HdVSekaiOutlineJFA/build --config Release" }
+hydra-jfa = { depends-on = ["configure-hydra-jfa", "build-hydra-jfa"] }
+test-jfa = { cmd = "pytest tests/slang_validate/ -v" }
