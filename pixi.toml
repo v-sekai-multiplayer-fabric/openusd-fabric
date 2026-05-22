@@ -36,3 +36,12 @@ configure-hydra-jfa = { cmd = "cmake -S hydra/HdVSekaiOutlineJFA -B hydra/HdVSek
 build-hydra-jfa = { cmd = "cmake --build hydra/HdVSekaiOutlineJFA/build --config Release" }
 hydra-jfa = { depends-on = ["configure-hydra-jfa", "build-hydra-jfa"] }
 test-jfa = { cmd = "pytest tests/slang_validate/ -v" }
+test-hydra = { cmd = "pytest tests/hydra/ -v" }
+# Integration probe: download mesh-mille-mire-feuille (Apache-2.0,
+# ~30 MB Mire.blend), export to USD via Blender headless, run the
+# V-Sekai post-export hook. Blender must be on PATH or pointed at
+# via the BLENDER env var. Currently a negative-path test: Mire ships
+# without V-Sekai markers, so the hook should report 0 schema
+# applications. The committed tests/fixtures/mire_essence.usda is
+# the positive-path counterpart.
+fetch-mire = { cmd = "python scripts/fetch_mire.py" }
