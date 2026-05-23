@@ -136,29 +136,33 @@ _BWD = {
 }
 
 
+import _upgrade_table as _runner  # noqa: E402
+
+
+# Per-xform extras the forward path needs (color3_via_shadow needs
+# `_Shadow`; color3_times_strength needs `_Matcap1Strength`). Wired so
+# the shared runner can splat them as kwargs.
+_FWD_EXTRAS = {
+    "color3_via_shadow":     {"scss_shadow":  "_Shadow"},
+    "color3_times_strength": {"strength":     "_Matcap1Strength"},
+}
+
+# Reverse-direction SCSS knobs the bridge pins to documented defaults.
+_BWD_DEFAULTS = {"_Shadow": 0.5, "_Matcap1Strength": 1.0}
+
+
 def scss_to_mtoon(scss_params: dict[str, Any],
                   *, map_path: Path = _MAP_PATH_DEFAULT) -> dict[str, Any]:
     """Translate a SCSS material parameter dict to its MToon counterpart.
 
-    `scss_params` is keyed by the SCSS property names (`_Color`, `_FresnelWidth`,
-    ...). Unknown keys (anything in `lossy_scss_only`) are skipped silently.
-    Missing keys keep MToon at the spec default.
+    `scss_params` is keyed by the SCSS property names (`_Color`,
+    `_FresnelWidth`, ...). Unknown keys (anything in `lossy_scss_only`)
+    are skipped silently. Missing keys keep MToon at the spec default.
     """
     m = _load_map(map_path)
-    out: dict[str, Any] = {}
-    for entry in m["entries"]:
-        if entry["scss"] not in scss_params:
-            continue
-        xform = entry["xform"]
-        fn = _FWD[xform]
-        value = scss_params[entry["scss"]]
-        if xform == "color3_via_shadow":
-            out[entry["mtoon"]] = fn(value, scss_params.get("_Shadow", 0.5))
-        elif xform == "color3_times_strength":
-            out[entry["mtoon"]] = fn(value, scss_params.get("_Matcap1Strength", 1.0))
-        else:
-            out[entry["mtoon"]] = fn(value)
-    return out
+    return _runner.run_forward(scss_params, m["entries"], _FWD,
+                                src_key="scss", dst_key="mtoon",
+                                extra_inputs=_FWD_EXTRAS)
 
 
 def mtoon_to_scss(mtoon_params: dict[str, Any],
@@ -170,17 +174,9 @@ def mtoon_to_scss(mtoon_params: dict[str, Any],
     trip is bit-stable on the recoverable subset.
     """
     m = _load_map(map_path)
-    out: dict[str, Any] = {}
-    for entry in m["entries"]:
-        if entry["mtoon"] not in mtoon_params:
-            continue
-        xform = entry["xform"]
-        bn = _BWD[xform]
-        out[entry["scss"]] = bn(mtoon_params[entry["mtoon"]])
-    # Default values for SCSS-only knobs that the reverse direction pins.
-    out.setdefault("_Shadow", 0.5)
-    out.setdefault("_Matcap1Strength", 1.0)
-    return out
+    return _runner.run_reverse(mtoon_params, m["entries"], _BWD,
+                                src_key="mtoon", dst_key="scss",
+                                defaults=_BWD_DEFAULTS)
 
 
 def reload_map(map_path: Path = _MAP_PATH_DEFAULT) -> dict[str, Any]:

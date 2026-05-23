@@ -1,0 +1,433 @@
+#usda 1.0
+(
+    """
+    X-Rite / Macbeth ColorChecker reference fixture (24 patches, 4 rows
+    by 6 columns). sRGB-D65 values from the manufacturer's published
+    table (Wikipedia "ColorChecker": Manufacturer's sRGB color values).
+
+    Each patch is a UsdGeomCube tagged with both:
+      * primvars:displayColor — picked up by Blender's USD importer
+        and renderers that read primvars (Hydra falls back to it when
+        no material is bound, Blender shows it as vertex colour);
+      * a UsdShade Material under /Chart/Mats — for renderers that
+        prefer a proper UsdPreviewSurface graph.
+
+    The double-tagging is on purpose: Blender's USD importer is fussy
+    about Material prim layout (separate Mats scope + connect-style
+    surface output is silently dropped), so the displayColor primvar
+    is the bulletproof path. Renderers that want the full material can
+    still walk `material:binding`.
+
+    Copyright 2026 The openusd-fabric authors.
+    SPDX-License-Identifier: MIT
+    """
+    defaultPrim = "Chart"
+    upAxis = "Y"
+    metersPerUnit = 1.0
+)
+
+def Xform "Chart"
+{
+    # Row 0
+    def Cube "P00_dark_skin" (prepend apiSchemas = ["MaterialBindingAPI"])
+    {
+        double size = 0.18
+        matrix4d xformOp:transform = ( (1,0,0,0), (0,1,0,0), (0,0,1,0), (-0.50,  0.30, 0, 1) )
+        uniform token[] xformOpOrder = ["xformOp:transform"]
+        color3f[] primvars:displayColor = [(0.451, 0.322, 0.267)]
+        rel material:binding = </Chart/Mats/M_dark_skin>
+    }
+    def Cube "P01_light_skin" (prepend apiSchemas = ["MaterialBindingAPI"])
+    {
+        double size = 0.18
+        matrix4d xformOp:transform = ( (1,0,0,0), (0,1,0,0), (0,0,1,0), (-0.30,  0.30, 0, 1) )
+        uniform token[] xformOpOrder = ["xformOp:transform"]
+        color3f[] primvars:displayColor = [(0.761, 0.588, 0.510)]
+        rel material:binding = </Chart/Mats/M_light_skin>
+    }
+    def Cube "P02_blue_sky" (prepend apiSchemas = ["MaterialBindingAPI"])
+    {
+        double size = 0.18
+        matrix4d xformOp:transform = ( (1,0,0,0), (0,1,0,0), (0,0,1,0), (-0.10,  0.30, 0, 1) )
+        uniform token[] xformOpOrder = ["xformOp:transform"]
+        color3f[] primvars:displayColor = [(0.384, 0.478, 0.616)]
+        rel material:binding = </Chart/Mats/M_blue_sky>
+    }
+    def Cube "P03_foliage" (prepend apiSchemas = ["MaterialBindingAPI"])
+    {
+        double size = 0.18
+        matrix4d xformOp:transform = ( (1,0,0,0), (0,1,0,0), (0,0,1,0), ( 0.10,  0.30, 0, 1) )
+        uniform token[] xformOpOrder = ["xformOp:transform"]
+        color3f[] primvars:displayColor = [(0.341, 0.424, 0.263)]
+        rel material:binding = </Chart/Mats/M_foliage>
+    }
+    def Cube "P04_blue_flower" (prepend apiSchemas = ["MaterialBindingAPI"])
+    {
+        double size = 0.18
+        matrix4d xformOp:transform = ( (1,0,0,0), (0,1,0,0), (0,0,1,0), ( 0.30,  0.30, 0, 1) )
+        uniform token[] xformOpOrder = ["xformOp:transform"]
+        color3f[] primvars:displayColor = [(0.522, 0.502, 0.694)]
+        rel material:binding = </Chart/Mats/M_blue_flower>
+    }
+    def Cube "P05_bluish_green" (prepend apiSchemas = ["MaterialBindingAPI"])
+    {
+        double size = 0.18
+        matrix4d xformOp:transform = ( (1,0,0,0), (0,1,0,0), (0,0,1,0), ( 0.50,  0.30, 0, 1) )
+        uniform token[] xformOpOrder = ["xformOp:transform"]
+        color3f[] primvars:displayColor = [(0.404, 0.741, 0.667)]
+        rel material:binding = </Chart/Mats/M_bluish_green>
+    }
+    # Row 1
+    def Cube "P06_orange" (prepend apiSchemas = ["MaterialBindingAPI"])
+    {
+        double size = 0.18
+        matrix4d xformOp:transform = ( (1,0,0,0), (0,1,0,0), (0,0,1,0), (-0.50,  0.10, 0, 1) )
+        uniform token[] xformOpOrder = ["xformOp:transform"]
+        color3f[] primvars:displayColor = [(0.839, 0.494, 0.173)]
+        rel material:binding = </Chart/Mats/M_orange>
+    }
+    def Cube "P07_purplish_blue" (prepend apiSchemas = ["MaterialBindingAPI"])
+    {
+        double size = 0.18
+        matrix4d xformOp:transform = ( (1,0,0,0), (0,1,0,0), (0,0,1,0), (-0.30,  0.10, 0, 1) )
+        uniform token[] xformOpOrder = ["xformOp:transform"]
+        color3f[] primvars:displayColor = [(0.314, 0.357, 0.651)]
+        rel material:binding = </Chart/Mats/M_purplish_blue>
+    }
+    def Cube "P08_moderate_red" (prepend apiSchemas = ["MaterialBindingAPI"])
+    {
+        double size = 0.18
+        matrix4d xformOp:transform = ( (1,0,0,0), (0,1,0,0), (0,0,1,0), (-0.10,  0.10, 0, 1) )
+        uniform token[] xformOpOrder = ["xformOp:transform"]
+        color3f[] primvars:displayColor = [(0.757, 0.353, 0.388)]
+        rel material:binding = </Chart/Mats/M_moderate_red>
+    }
+    def Cube "P09_purple" (prepend apiSchemas = ["MaterialBindingAPI"])
+    {
+        double size = 0.18
+        matrix4d xformOp:transform = ( (1,0,0,0), (0,1,0,0), (0,0,1,0), ( 0.10,  0.10, 0, 1) )
+        uniform token[] xformOpOrder = ["xformOp:transform"]
+        color3f[] primvars:displayColor = [(0.369, 0.235, 0.424)]
+        rel material:binding = </Chart/Mats/M_purple>
+    }
+    def Cube "P10_yellow_green" (prepend apiSchemas = ["MaterialBindingAPI"])
+    {
+        double size = 0.18
+        matrix4d xformOp:transform = ( (1,0,0,0), (0,1,0,0), (0,0,1,0), ( 0.30,  0.10, 0, 1) )
+        uniform token[] xformOpOrder = ["xformOp:transform"]
+        color3f[] primvars:displayColor = [(0.616, 0.737, 0.251)]
+        rel material:binding = </Chart/Mats/M_yellow_green>
+    }
+    def Cube "P11_orange_yellow" (prepend apiSchemas = ["MaterialBindingAPI"])
+    {
+        double size = 0.18
+        matrix4d xformOp:transform = ( (1,0,0,0), (0,1,0,0), (0,0,1,0), ( 0.50,  0.10, 0, 1) )
+        uniform token[] xformOpOrder = ["xformOp:transform"]
+        color3f[] primvars:displayColor = [(0.878, 0.635, 0.180)]
+        rel material:binding = </Chart/Mats/M_orange_yellow>
+    }
+    # Row 2
+    def Cube "P12_blue" (prepend apiSchemas = ["MaterialBindingAPI"])
+    {
+        double size = 0.18
+        matrix4d xformOp:transform = ( (1,0,0,0), (0,1,0,0), (0,0,1,0), (-0.50, -0.10, 0, 1) )
+        uniform token[] xformOpOrder = ["xformOp:transform"]
+        color3f[] primvars:displayColor = [(0.220, 0.239, 0.588)]
+        rel material:binding = </Chart/Mats/M_blue>
+    }
+    def Cube "P13_green" (prepend apiSchemas = ["MaterialBindingAPI"])
+    {
+        double size = 0.18
+        matrix4d xformOp:transform = ( (1,0,0,0), (0,1,0,0), (0,0,1,0), (-0.30, -0.10, 0, 1) )
+        uniform token[] xformOpOrder = ["xformOp:transform"]
+        color3f[] primvars:displayColor = [(0.275, 0.580, 0.286)]
+        rel material:binding = </Chart/Mats/M_green>
+    }
+    def Cube "P14_red" (prepend apiSchemas = ["MaterialBindingAPI"])
+    {
+        double size = 0.18
+        matrix4d xformOp:transform = ( (1,0,0,0), (0,1,0,0), (0,0,1,0), (-0.10, -0.10, 0, 1) )
+        uniform token[] xformOpOrder = ["xformOp:transform"]
+        color3f[] primvars:displayColor = [(0.686, 0.212, 0.235)]
+        rel material:binding = </Chart/Mats/M_red>
+    }
+    def Cube "P15_yellow" (prepend apiSchemas = ["MaterialBindingAPI"])
+    {
+        double size = 0.18
+        matrix4d xformOp:transform = ( (1,0,0,0), (0,1,0,0), (0,0,1,0), ( 0.10, -0.10, 0, 1) )
+        uniform token[] xformOpOrder = ["xformOp:transform"]
+        color3f[] primvars:displayColor = [(0.906, 0.780, 0.122)]
+        rel material:binding = </Chart/Mats/M_yellow>
+    }
+    def Cube "P16_magenta" (prepend apiSchemas = ["MaterialBindingAPI"])
+    {
+        double size = 0.18
+        matrix4d xformOp:transform = ( (1,0,0,0), (0,1,0,0), (0,0,1,0), ( 0.30, -0.10, 0, 1) )
+        uniform token[] xformOpOrder = ["xformOp:transform"]
+        color3f[] primvars:displayColor = [(0.733, 0.337, 0.584)]
+        rel material:binding = </Chart/Mats/M_magenta>
+    }
+    def Cube "P17_cyan" (prepend apiSchemas = ["MaterialBindingAPI"])
+    {
+        double size = 0.18
+        matrix4d xformOp:transform = ( (1,0,0,0), (0,1,0,0), (0,0,1,0), ( 0.50, -0.10, 0, 1) )
+        uniform token[] xformOpOrder = ["xformOp:transform"]
+        color3f[] primvars:displayColor = [(0.031, 0.522, 0.631)]
+        rel material:binding = </Chart/Mats/M_cyan>
+    }
+    # Row 3 — neutral grey ramp
+    def Cube "P18_white_9_5" (prepend apiSchemas = ["MaterialBindingAPI"])
+    {
+        double size = 0.18
+        matrix4d xformOp:transform = ( (1,0,0,0), (0,1,0,0), (0,0,1,0), (-0.50, -0.30, 0, 1) )
+        uniform token[] xformOpOrder = ["xformOp:transform"]
+        color3f[] primvars:displayColor = [(0.953, 0.953, 0.953)]
+        rel material:binding = </Chart/Mats/M_white_9_5>
+    }
+    def Cube "P19_neutral_8" (prepend apiSchemas = ["MaterialBindingAPI"])
+    {
+        double size = 0.18
+        matrix4d xformOp:transform = ( (1,0,0,0), (0,1,0,0), (0,0,1,0), (-0.30, -0.30, 0, 1) )
+        uniform token[] xformOpOrder = ["xformOp:transform"]
+        color3f[] primvars:displayColor = [(0.784, 0.784, 0.784)]
+        rel material:binding = </Chart/Mats/M_neutral_8>
+    }
+    def Cube "P20_neutral_6_5" (prepend apiSchemas = ["MaterialBindingAPI"])
+    {
+        double size = 0.18
+        matrix4d xformOp:transform = ( (1,0,0,0), (0,1,0,0), (0,0,1,0), (-0.10, -0.30, 0, 1) )
+        uniform token[] xformOpOrder = ["xformOp:transform"]
+        color3f[] primvars:displayColor = [(0.627, 0.627, 0.627)]
+        rel material:binding = </Chart/Mats/M_neutral_6_5>
+    }
+    def Cube "P21_neutral_5" (prepend apiSchemas = ["MaterialBindingAPI"])
+    {
+        double size = 0.18
+        matrix4d xformOp:transform = ( (1,0,0,0), (0,1,0,0), (0,0,1,0), ( 0.10, -0.30, 0, 1) )
+        uniform token[] xformOpOrder = ["xformOp:transform"]
+        color3f[] primvars:displayColor = [(0.478, 0.478, 0.478)]
+        rel material:binding = </Chart/Mats/M_neutral_5>
+    }
+    def Cube "P22_neutral_3_5" (prepend apiSchemas = ["MaterialBindingAPI"])
+    {
+        double size = 0.18
+        matrix4d xformOp:transform = ( (1,0,0,0), (0,1,0,0), (0,0,1,0), ( 0.30, -0.30, 0, 1) )
+        uniform token[] xformOpOrder = ["xformOp:transform"]
+        color3f[] primvars:displayColor = [(0.333, 0.333, 0.333)]
+        rel material:binding = </Chart/Mats/M_neutral_3_5>
+    }
+    def Cube "P23_black_2" (prepend apiSchemas = ["MaterialBindingAPI"])
+    {
+        double size = 0.18
+        matrix4d xformOp:transform = ( (1,0,0,0), (0,1,0,0), (0,0,1,0), ( 0.50, -0.30, 0, 1) )
+        uniform token[] xformOpOrder = ["xformOp:transform"]
+        color3f[] primvars:displayColor = [(0.204, 0.204, 0.204)]
+        rel material:binding = </Chart/Mats/M_black_2>
+    }
+
+    # Materials are kept primarily for renderers that prefer
+    # UsdPreviewSurface bindings; the per-cube primvars:displayColor is
+    # what Blender's importer actually picks up, since Blender's
+    # behaviour on UsdShade graphs is partial.
+    def Scope "Mats"
+    {
+        def Material "M_dark_skin" {
+            token outputs:surface.connect = </Chart/Mats/M_dark_skin/Surface.outputs:surface>
+            def Shader "Surface" {
+                uniform token info:id = "UsdPreviewSurface"
+                color3f inputs:diffuseColor = (0.451, 0.322, 0.267)
+                token outputs:surface
+            }
+        }
+        def Material "M_light_skin" {
+            token outputs:surface.connect = </Chart/Mats/M_light_skin/Surface.outputs:surface>
+            def Shader "Surface" {
+                uniform token info:id = "UsdPreviewSurface"
+                color3f inputs:diffuseColor = (0.761, 0.588, 0.510)
+                token outputs:surface
+            }
+        }
+        def Material "M_blue_sky" {
+            token outputs:surface.connect = </Chart/Mats/M_blue_sky/Surface.outputs:surface>
+            def Shader "Surface" {
+                uniform token info:id = "UsdPreviewSurface"
+                color3f inputs:diffuseColor = (0.384, 0.478, 0.616)
+                token outputs:surface
+            }
+        }
+        def Material "M_foliage" {
+            token outputs:surface.connect = </Chart/Mats/M_foliage/Surface.outputs:surface>
+            def Shader "Surface" {
+                uniform token info:id = "UsdPreviewSurface"
+                color3f inputs:diffuseColor = (0.341, 0.424, 0.263)
+                token outputs:surface
+            }
+        }
+        def Material "M_blue_flower" {
+            token outputs:surface.connect = </Chart/Mats/M_blue_flower/Surface.outputs:surface>
+            def Shader "Surface" {
+                uniform token info:id = "UsdPreviewSurface"
+                color3f inputs:diffuseColor = (0.522, 0.502, 0.694)
+                token outputs:surface
+            }
+        }
+        def Material "M_bluish_green" {
+            token outputs:surface.connect = </Chart/Mats/M_bluish_green/Surface.outputs:surface>
+            def Shader "Surface" {
+                uniform token info:id = "UsdPreviewSurface"
+                color3f inputs:diffuseColor = (0.404, 0.741, 0.667)
+                token outputs:surface
+            }
+        }
+        def Material "M_orange" {
+            token outputs:surface.connect = </Chart/Mats/M_orange/Surface.outputs:surface>
+            def Shader "Surface" {
+                uniform token info:id = "UsdPreviewSurface"
+                color3f inputs:diffuseColor = (0.839, 0.494, 0.173)
+                token outputs:surface
+            }
+        }
+        def Material "M_purplish_blue" {
+            token outputs:surface.connect = </Chart/Mats/M_purplish_blue/Surface.outputs:surface>
+            def Shader "Surface" {
+                uniform token info:id = "UsdPreviewSurface"
+                color3f inputs:diffuseColor = (0.314, 0.357, 0.651)
+                token outputs:surface
+            }
+        }
+        def Material "M_moderate_red" {
+            token outputs:surface.connect = </Chart/Mats/M_moderate_red/Surface.outputs:surface>
+            def Shader "Surface" {
+                uniform token info:id = "UsdPreviewSurface"
+                color3f inputs:diffuseColor = (0.757, 0.353, 0.388)
+                token outputs:surface
+            }
+        }
+        def Material "M_purple" {
+            token outputs:surface.connect = </Chart/Mats/M_purple/Surface.outputs:surface>
+            def Shader "Surface" {
+                uniform token info:id = "UsdPreviewSurface"
+                color3f inputs:diffuseColor = (0.369, 0.235, 0.424)
+                token outputs:surface
+            }
+        }
+        def Material "M_yellow_green" {
+            token outputs:surface.connect = </Chart/Mats/M_yellow_green/Surface.outputs:surface>
+            def Shader "Surface" {
+                uniform token info:id = "UsdPreviewSurface"
+                color3f inputs:diffuseColor = (0.616, 0.737, 0.251)
+                token outputs:surface
+            }
+        }
+        def Material "M_orange_yellow" {
+            token outputs:surface.connect = </Chart/Mats/M_orange_yellow/Surface.outputs:surface>
+            def Shader "Surface" {
+                uniform token info:id = "UsdPreviewSurface"
+                color3f inputs:diffuseColor = (0.878, 0.635, 0.180)
+                token outputs:surface
+            }
+        }
+        def Material "M_blue" {
+            token outputs:surface.connect = </Chart/Mats/M_blue/Surface.outputs:surface>
+            def Shader "Surface" {
+                uniform token info:id = "UsdPreviewSurface"
+                color3f inputs:diffuseColor = (0.220, 0.239, 0.588)
+                token outputs:surface
+            }
+        }
+        def Material "M_green" {
+            token outputs:surface.connect = </Chart/Mats/M_green/Surface.outputs:surface>
+            def Shader "Surface" {
+                uniform token info:id = "UsdPreviewSurface"
+                color3f inputs:diffuseColor = (0.275, 0.580, 0.286)
+                token outputs:surface
+            }
+        }
+        def Material "M_red" {
+            token outputs:surface.connect = </Chart/Mats/M_red/Surface.outputs:surface>
+            def Shader "Surface" {
+                uniform token info:id = "UsdPreviewSurface"
+                color3f inputs:diffuseColor = (0.686, 0.212, 0.235)
+                token outputs:surface
+            }
+        }
+        def Material "M_yellow" {
+            token outputs:surface.connect = </Chart/Mats/M_yellow/Surface.outputs:surface>
+            def Shader "Surface" {
+                uniform token info:id = "UsdPreviewSurface"
+                color3f inputs:diffuseColor = (0.906, 0.780, 0.122)
+                token outputs:surface
+            }
+        }
+        def Material "M_magenta" {
+            token outputs:surface.connect = </Chart/Mats/M_magenta/Surface.outputs:surface>
+            def Shader "Surface" {
+                uniform token info:id = "UsdPreviewSurface"
+                color3f inputs:diffuseColor = (0.733, 0.337, 0.584)
+                token outputs:surface
+            }
+        }
+        def Material "M_cyan" {
+            token outputs:surface.connect = </Chart/Mats/M_cyan/Surface.outputs:surface>
+            def Shader "Surface" {
+                uniform token info:id = "UsdPreviewSurface"
+                color3f inputs:diffuseColor = (0.031, 0.522, 0.631)
+                token outputs:surface
+            }
+        }
+        def Material "M_white_9_5" {
+            token outputs:surface.connect = </Chart/Mats/M_white_9_5/Surface.outputs:surface>
+            def Shader "Surface" {
+                uniform token info:id = "UsdPreviewSurface"
+                color3f inputs:diffuseColor = (0.953, 0.953, 0.953)
+                token outputs:surface
+            }
+        }
+        def Material "M_neutral_8" {
+            token outputs:surface.connect = </Chart/Mats/M_neutral_8/Surface.outputs:surface>
+            def Shader "Surface" {
+                uniform token info:id = "UsdPreviewSurface"
+                color3f inputs:diffuseColor = (0.784, 0.784, 0.784)
+                token outputs:surface
+            }
+        }
+        def Material "M_neutral_6_5" {
+            token outputs:surface.connect = </Chart/Mats/M_neutral_6_5/Surface.outputs:surface>
+            def Shader "Surface" {
+                uniform token info:id = "UsdPreviewSurface"
+                color3f inputs:diffuseColor = (0.627, 0.627, 0.627)
+                token outputs:surface
+            }
+        }
+        def Material "M_neutral_5" {
+            token outputs:surface.connect = </Chart/Mats/M_neutral_5/Surface.outputs:surface>
+            def Shader "Surface" {
+                uniform token info:id = "UsdPreviewSurface"
+                color3f inputs:diffuseColor = (0.478, 0.478, 0.478)
+                token outputs:surface
+            }
+        }
+        def Material "M_neutral_3_5" {
+            token outputs:surface.connect = </Chart/Mats/M_neutral_3_5/Surface.outputs:surface>
+            def Shader "Surface" {
+                uniform token info:id = "UsdPreviewSurface"
+                color3f inputs:diffuseColor = (0.333, 0.333, 0.333)
+                token outputs:surface
+            }
+        }
+        def Material "M_black_2" {
+            token outputs:surface.connect = </Chart/Mats/M_black_2/Surface.outputs:surface>
+            def Shader "Surface" {
+                uniform token info:id = "UsdPreviewSurface"
+                color3f inputs:diffuseColor = (0.204, 0.204, 0.204)
+                token outputs:surface
+            }
+        }
+    }
+
+    def DomeLight "Ambient"
+    {
+        color3f inputs:color = (1.0, 1.0, 1.0)
+        float inputs:intensity = 1500
+    }
+}

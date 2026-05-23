@@ -29,6 +29,8 @@ open Fabric
 private def artifacts : List (String × String) :=
   [ ( "schema/spring_bone_ranges_validator.py"
     , Fabric.Schema.SpringBoneRanges.pythonValidatorSource )
+  , ( "schema/spring_bone_ranges_validator.hpp"
+    , Fabric.Schema.SpringBoneRanges.cppValidatorSource )
   , ( "maps/scss_mtoon_map.json"
     , Fabric.VrmUpgrade.ScssMToon.jsonSource )
   , ( "maps/humanoid_bones_map.json"

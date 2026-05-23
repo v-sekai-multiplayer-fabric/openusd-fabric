@@ -51,3 +51,4 @@ fetch-mire = { cmd = "python scripts/fetch_mire.py" }
 # attributes are visible to the importer but unrendered until a real
 # MToon Hydra delegate exists.
 render-hydra-compare = { cmd = "usdrecord --defaultTime --imageWidth 1024 tests/fixtures/compare_scss_mtoon.usda build/renders/hydra_scss_mtoon_compare.png", env = { PXR_PLUGINPATH_NAME = "schema" } }
+render-hydra-macbeth = { cmd = "usdrecord --defaultTime --imageWidth 1200 tests/fixtures/macbeth_colorchecker.usda build/renders/hydra_macbeth.png" }
