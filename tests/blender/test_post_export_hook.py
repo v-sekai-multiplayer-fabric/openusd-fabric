@@ -180,22 +180,28 @@ def test_falsy_marker_skips(tmp_path: Path) -> None:
 
 def _make_stage_with_armature(path: Path, blob: str) -> Usd.Stage:
     """Minimal stage: Avatar / Armature (with the config blob) / SkelRoot
-    with a Skeleton inside. Mimics Blender's USD export of a VRM-flavoured
-    rig where the addon's spring_bone1 table has been serialised to JSON."""
-    import json as _json
+    with a Skeleton inside. The Skeleton's `joints` array carries the
+    bone names the blob references — the synthesis resolves those to
+    int indices."""
     stage = Usd.Stage.CreateNew(str(path))
     root = UsdGeom.Xform.Define(stage, "/Avatar")
     stage.SetDefaultPrim(root.GetPrim())
-    # The "Armature" object — Blender exports it as an Xform alongside
-    # the SkelRoot. The blob lives on this prim.
     arm = UsdGeom.Xform.Define(stage, "/Avatar/Armature")
     arm.GetPrim().CreateAttribute(
         "userProperties:v_sekai:springBoneConfig",
         Sdf.ValueTypeNames.String).Set(blob)
-    # The SkelRoot (sibling of Armature).
-    from pxr import UsdSkel as _UsdSkel
+    from pxr import UsdSkel as _UsdSkel, Gf as _Gf
     sr = _UsdSkel.Root.Define(stage, "/Avatar/Skel_SkelRoot")
-    _UsdSkel.Skeleton.Define(stage, "/Avatar/Skel_SkelRoot/Skeleton")
+    skel = _UsdSkel.Skeleton.Define(stage, "/Avatar/Skel_SkelRoot/Skeleton")
+    # Bones the synthesis blob will reference. Hair_Back_0/1 are the
+    # spring chain, Head + Chest are the collider anchors. The order
+    # determines the int indices the synthesis resolves to.
+    skel.CreateJointsAttr(
+        ["Hips", "Hips/Spine", "Hips/Spine/Chest", "Hips/Spine/Chest/Head",
+         "Hair_Back_0", "Hair_Back_0/Hair_Back_1"])
+    ident = _Gf.Matrix4d(1)
+    skel.CreateBindTransformsAttr([ident] * 6)
+    skel.CreateRestTransformsAttr([ident] * 6)
     stage.GetRootLayer().Save()
     return stage
 
@@ -233,8 +239,13 @@ def test_spring_synthesis_fires_when_blob_present(tmp_path: Path) -> None:
     chain = stage.GetPrimAtPath("/Avatar/Skel_SkelRoot/SpringBones/Chain_Hair_Back")
     assert chain.IsValid(), "chain prim was not synthesised at the expected path"
     assert chain.HasAPI("VSekaiSpringBoneAPI"), "VSekaiSpringBoneAPI not applied"
+    # idtx_core's importer reads int[] joint indices — Hair_Back_0 is
+    # joint #4 in our fixture skeleton, Hair_Back_1 is #5.
     joints = chain.GetAttribute("v_sekai:springBone:joints").Get()
-    assert list(joints) == ["Hair_Back_0", "Hair_Back_1"]
+    assert list(joints) == [4, 5]
+    # Provenance: bone names preserved on a custom token[] for debug.
+    names = chain.GetAttribute("v_sekai:springBone:jointNames").Get()
+    assert list(names) == ["Hair_Back_0", "Hair_Back_1"]
     assert chain.GetAttribute("v_sekai:springBone:stiffness").Get() == pytest.approx(1.0)
 
 
@@ -263,7 +274,11 @@ def test_spring_synthesis_collider_attrs(tmp_path: Path) -> None:
     head = stage.GetPrimAtPath("/Avatar/Skel_SkelRoot/SpringBones/Collider_Head")
     assert head.IsValid()
     assert head.HasAPI("VSekaiSpringBoneColliderAPI")
-    assert str(head.GetAttribute("v_sekai:springBone:collider:attachedBone").Get()) == "Head"
+    # attachedBone is an int index into the Skeleton's joints.
+    # Head is joint #3 in our fixture skeleton.
+    assert head.GetAttribute("v_sekai:springBone:collider:attachedBone").Get() == 3
+    assert (str(head.GetAttribute("v_sekai:springBone:collider:attachedBoneName").Get())
+            == "Head")
     assert str(head.GetAttribute("v_sekai:springBone:collider:shape").Get()) == "sphere"
     assert head.GetAttribute("v_sekai:springBone:collider:radius").Get() == pytest.approx(0.10)
     # Sphere — no tail attribute should be created.
@@ -291,6 +306,27 @@ def test_spring_synthesis_collider_groups(tmp_path: Path) -> None:
     chain = stage.GetPrimAtPath("/Avatar/Skel_SkelRoot/SpringBones/Chain_Hair_Back")
     chain_grps = chain.GetAttribute("v_sekai:springBone:colliderGroups").Get()
     assert list(chain_grps) == ["HeadGroup"]
+
+
+def test_spring_synthesis_flattens_colliders(tmp_path: Path) -> None:
+    """The C ABI has no collider-group concept — the importer reads
+    a flat v_sekai:springBone:colliders token[] on each chain. The
+    hook must expand the chain's colliderGroups references into that
+    flat list while ALSO preserving the structured colliderGroups
+    attribute for round-trip transparency."""
+    p = tmp_path / "stage.usda"
+    _make_stage_with_armature(p, _REPRESENTATIVE_BLOB)
+    stage = Usd.Stage.Open(str(p))
+    post_export_hook.apply_v_sekai_schemas(stage)
+
+    chain = stage.GetPrimAtPath("/Avatar/Skel_SkelRoot/SpringBones/Chain_Hair_Back")
+    # Indices into the collider walk-order. The fixture's HeadGroup
+    # holds [Head, ChestCap] — emitted first/second, so [0, 1].
+    flat = chain.GetAttribute("v_sekai:springBone:colliders").Get()
+    assert list(flat) == [0, 1]
+    # Provenance side-channel keeps the names for debugging.
+    names = chain.GetAttribute("v_sekai:springBone:colliderNames").Get()
+    assert list(names) == ["Head", "ChestCap"]
 
 
 def test_spring_synthesis_bad_json_doesnt_crash(tmp_path: Path) -> None:

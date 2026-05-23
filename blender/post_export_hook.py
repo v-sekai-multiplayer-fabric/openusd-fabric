@@ -80,6 +80,16 @@ COLLIDER_MARKER_ATTR = "userProperties:v_sekai:springBoneCollider"
 # parses the JSON, and synthesises sibling Xform prims under the
 # corresponding SkelRoot — the layout idtx_core would have emitted
 # directly. See pre_export_mirror.py _stamp_spring_config_blob.
+#
+# Wire format on the synthesised prims (matches idtx_core's
+# USD exporter so the importer round-trips cleanly):
+#   v_sekai:springBone:joints      = int[]   (joint indices into
+#                                              the Skeleton's `joints`)
+#   v_sekai:springBone:colliders   = int[]   (collider walk-order
+#                                              indices under SpringBones)
+#   v_sekai:springBone:collider:attachedBone = int (joint index)
+# Bone-name / collider-name strings ride alongside on custom
+# `*Names` / `*Name` token attributes for human / debug consumption.
 SPRINGBONE_CONFIG_ATTR = "userProperties:v_sekai:springBoneConfig"
 
 # MToon factor mirroring: every Blender-side id_property named
@@ -382,8 +392,40 @@ def _synthesise_spring_prims_from_blob(
         counts["springConfig_no_skelroot"] = counts.get("springConfig_no_skelroot", 0) + 1
         return
 
+    # idtx_core's importer reads spring-chain joints + colliders as
+    # int[] indices (matching how idtx_core's USD exporter writes
+    # them — see idtx_export_usd.cpp:376–390). Resolve bone-name
+    # → joint index via the Skeleton's `joints` attribute (leaf
+    # name of each Sdf path), and resolve collider-name → flat
+    # walk-order index via a name table built as we emit colliders.
+    bone_to_joint_idx: dict[str, int] = {}
+    skel_prim = None
+    for desc in Usd.PrimRange(skelroot):
+        if desc.IsA(UsdSkel.Skeleton):
+            skel_prim = desc
+            break
+    if skel_prim is not None:
+        joints_attr = skel_prim.GetAttribute("joints")
+        if joints_attr and joints_attr.IsValid():
+            for i, jp in enumerate(joints_attr.Get() or []):
+                leaf = str(jp).rsplit("/", 1)[-1]
+                bone_to_joint_idx[leaf] = i
+                bone_to_joint_idx[str(jp)] = i  # also full-path form
+
     container_path = skelroot.GetPath().AppendChild("SpringBones")
     container = stage.DefinePrim(container_path, "Scope")
+
+    # Build a (group name → [collider name]) lookup so chains that
+    # reference colliderGroups can be flattened to a per-chain
+    # collider-name list, then mapped through the name→index table
+    # we accumulate when emitting collider prims.
+    group_lookup: dict[str, list[str]] = {}
+    for grp in config.get("colliderGroups", []):
+        gname = grp.get("name", "")
+        if gname:
+            group_lookup[gname] = [str(c) for c in grp.get("colliders", [])]
+
+    collider_name_to_idx: dict[str, int] = {}
 
     used_names: set[str] = set()
     def _unique(base: str) -> str:
@@ -395,6 +437,44 @@ def _synthesise_spring_prims_from_blob(
             candidate = f"{base}_{i}"
         used_names.add(candidate)
         return candidate
+
+    # Colliders FIRST: idtx_core's importer walks colliders before
+    # chains (idtx_import_usd.cpp:553–561) so chains can reference
+    # them by their walk-order index. We must do the same so the
+    # name→index table we build matches the importer's view.
+    for col in config.get("colliders", []):
+        bone = col.get("attachedBone", "")
+        if not bone: continue
+        col_name_src = col.get("name") or bone
+        name = _unique(_sanitise_prim_name(
+            "Collider_" + col_name_src, "Collider"))
+        prim = stage.DefinePrim(container_path.AppendChild(name), "Xform")
+        _apply_api(prim, "VSekaiSpringBoneColliderAPI")
+        counts["VSekaiSpringBoneColliderAPI"] += 1
+        counts["springColliders_synthesised"] = counts.get("springColliders_synthesised", 0) + 1
+        collider_name_to_idx[col_name_src] = len(collider_name_to_idx)
+        # attachedBone is an int index into the Skeleton's `joints`.
+        attached_idx = bone_to_joint_idx.get(str(bone), -1)
+        prim.CreateAttribute("v_sekai:springBone:collider:attachedBone",
+            Sdf.ValueTypeNames.Int).Set(attached_idx)
+        shape = str(col.get("shape", "sphere"))
+        prim.CreateAttribute("v_sekai:springBone:collider:shape", Sdf.ValueTypeNames.Token
+            ).Set(shape)
+        prim.CreateAttribute("v_sekai:springBone:collider:radius", Sdf.ValueTypeNames.Float
+            ).Set(float(col.get("radius", 0.05)))
+        off = col.get("offset", [0.0, 0.0, 0.0])
+        prim.CreateAttribute("v_sekai:springBone:collider:offset", Sdf.ValueTypeNames.Vector3f
+            ).Set((float(off[0]), float(off[1]), float(off[2])))
+        if shape == "capsule" and "tail" in col:
+            tail = col["tail"]
+            prim.CreateAttribute("v_sekai:springBone:collider:tail", Sdf.ValueTypeNames.Vector3f
+                ).Set((float(tail[0]), float(tail[1]), float(tail[2])))
+        # Provenance: keep the original bone name + collider name as
+        # custom strings for human inspection / round-trip transparency.
+        prim.CreateAttribute("v_sekai:springBone:collider:attachedBoneName",
+            Sdf.ValueTypeNames.Token, custom=True).Set(str(bone))
+        prim.CreateAttribute("v_sekai:springBone:collider:vrmName",
+            Sdf.ValueTypeNames.Token, custom=True).Set(col_name_src)
 
     for chain in config.get("chains", []):
         joints = chain.get("joints", [])
@@ -421,44 +501,58 @@ def _synthesise_spring_prims_from_blob(
             ).Set((float(gd[0]), float(gd[1]), float(gd[2])))
         prim.CreateAttribute("v_sekai:springBone:hitRadius", Sdf.ValueTypeNames.Float
             ).Set(float(first.get("hitRadius", 0.02)))
-        # Parallel arrays: one entry per joint, indexed by `joints`.
-        bone_tokens = [str(j.get("bone", "")) for j in joints]
-        prim.CreateAttribute("v_sekai:springBone:joints", Sdf.ValueTypeNames.TokenArray
-            ).Set(bone_tokens)
+        # joints: int[] indices into the Skeleton's `joints` array.
+        # Bones the resolver can't match drop out — better than a
+        # poisoned -1 sentinel that would index out-of-bounds later.
+        joint_indices: list[int] = []
+        joint_names_kept: list[str] = []
+        for j in joints:
+            bone_name = str(j.get("bone", ""))
+            idx = bone_to_joint_idx.get(bone_name, -1)
+            if idx >= 0:
+                joint_indices.append(idx)
+                joint_names_kept.append(bone_name)
+        prim.CreateAttribute("v_sekai:springBone:joints", Sdf.ValueTypeNames.IntArray
+            ).Set(joint_indices)
+        # Provenance: keep the bone-name list as a custom token[]
+        # so debugging tools can recover the authoring intent without
+        # having to dereference the Skeleton joints array.
+        prim.CreateAttribute("v_sekai:springBone:jointNames",
+            Sdf.ValueTypeNames.TokenArray, custom=True).Set(joint_names_kept)
+        # Per-joint divergence (matches the surviving joint set).
         prim.CreateAttribute("v_sekai:springBone:perJointStiffness", Sdf.ValueTypeNames.FloatArray
-            ).Set([float(j.get("stiffness",     first.get("stiffness",     1.0))) for j in joints])
+            ).Set([float(j.get("stiffness",     first.get("stiffness",     1.0)))
+                   for j, idx in zip(joints, [bone_to_joint_idx.get(str(j.get("bone","")), -1)
+                                              for j in joints]) if idx >= 0])
         prim.CreateAttribute("v_sekai:springBone:perJointDrag", Sdf.ValueTypeNames.FloatArray
-            ).Set([float(j.get("drag",          first.get("drag",          0.4))) for j in joints])
+            ).Set([float(j.get("drag",          first.get("drag",          0.4)))
+                   for j, idx in zip(joints, [bone_to_joint_idx.get(str(j.get("bone","")), -1)
+                                              for j in joints]) if idx >= 0])
         prim.CreateAttribute("v_sekai:springBone:perJointHitRadius", Sdf.ValueTypeNames.FloatArray
-            ).Set([float(j.get("hitRadius",     first.get("hitRadius",     0.02))) for j in joints])
+            ).Set([float(j.get("hitRadius",     first.get("hitRadius",     0.02)))
+                   for j, idx in zip(joints, [bone_to_joint_idx.get(str(j.get("bone","")), -1)
+                                              for j in joints]) if idx >= 0])
         groups = chain.get("colliderGroups", [])
         if groups:
             prim.CreateAttribute("v_sekai:springBone:colliderGroups", Sdf.ValueTypeNames.TokenArray
                 ).Set([str(g) for g in groups])
-
-    for col in config.get("colliders", []):
-        bone = col.get("attachedBone", "")
-        if not bone: continue
-        name = _unique(_sanitise_prim_name(
-            "Collider_" + (col.get("name") or bone), "Collider"))
-        prim = stage.DefinePrim(container_path.AppendChild(name), "Xform")
-        _apply_api(prim, "VSekaiSpringBoneColliderAPI")
-        counts["VSekaiSpringBoneColliderAPI"] += 1
-        counts["springColliders_synthesised"] = counts.get("springColliders_synthesised", 0) + 1
-        prim.CreateAttribute("v_sekai:springBone:collider:attachedBone", Sdf.ValueTypeNames.Token
-            ).Set(str(bone))
-        shape = str(col.get("shape", "sphere"))
-        prim.CreateAttribute("v_sekai:springBone:collider:shape", Sdf.ValueTypeNames.Token
-            ).Set(shape)
-        prim.CreateAttribute("v_sekai:springBone:collider:radius", Sdf.ValueTypeNames.Float
-            ).Set(float(col.get("radius", 0.05)))
-        off = col.get("offset", [0.0, 0.0, 0.0])
-        prim.CreateAttribute("v_sekai:springBone:collider:offset", Sdf.ValueTypeNames.Vector3f
-            ).Set((float(off[0]), float(off[1]), float(off[2])))
-        if shape == "capsule" and "tail" in col:
-            tail = col["tail"]
-            prim.CreateAttribute("v_sekai:springBone:collider:tail", Sdf.ValueTypeNames.Vector3f
-                ).Set((float(tail[0]), float(tail[1]), float(tail[2])))
+            # Flatten group refs → list of collider names → list of
+            # int indices (de-duplicated, walk-order).
+            seen: set[int] = set()
+            col_indices: list[int] = []
+            col_names_kept: list[str] = []
+            for g in groups:
+                for cname in group_lookup.get(str(g), []):
+                    cidx = collider_name_to_idx.get(str(cname), -1)
+                    if cidx >= 0 and cidx not in seen:
+                        col_indices.append(cidx)
+                        col_names_kept.append(str(cname))
+                        seen.add(cidx)
+            if col_indices:
+                prim.CreateAttribute("v_sekai:springBone:colliders",
+                    Sdf.ValueTypeNames.IntArray).Set(col_indices)
+                prim.CreateAttribute("v_sekai:springBone:colliderNames",
+                    Sdf.ValueTypeNames.TokenArray, custom=True).Set(col_names_kept)
 
     # Collider-groups: a list of named groups, each holding a list of
     # collider names. Emit as a single token[] array attribute keyed by
