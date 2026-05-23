@@ -41,13 +41,15 @@ the predicates are what change.
 from __future__ import annotations
 
 import argparse
+import json
 import os
+import re
 import sys
 from pathlib import Path
-from typing import Iterable
+from typing import Iterable, Optional
 
 try:
-    from pxr import Sdf, Usd, UsdGeom, UsdShade
+    from pxr import Sdf, Usd, UsdGeom, UsdShade, UsdSkel
 except ImportError as exc:
     raise SystemExit(
         "pxr (OpenUSD Python bindings) is not importable. Run this script "
@@ -70,6 +72,15 @@ USER_PROPERTIES_PREFIX = "userProperties:"
 MTOON_MARKER_ATTR = "userProperties:v_sekai:mtoon"
 SPRINGBONE_MARKER_ATTR = "userProperties:v_sekai:springBone"
 COLLIDER_MARKER_ATTR = "userProperties:v_sekai:springBoneCollider"
+
+# Side-channel: the pre-export mirror stamps the addon's full
+# spring_bone1 table as a JSON id_property on the Armature OBJECT
+# (UsdSkel joints aren't prims, so per-bone id_properties can't
+# survive Blender's USD export). The hook reads this attribute,
+# parses the JSON, and synthesises sibling Xform prims under the
+# corresponding SkelRoot — the layout idtx_core would have emitted
+# directly. See pre_export_mirror.py _stamp_spring_config_blob.
+SPRINGBONE_CONFIG_ATTR = "userProperties:v_sekai:springBoneConfig"
 
 # MToon factor mirroring: every Blender-side id_property named
 # `v_sekai:mtoon:<field>` is copied onto the USD prim as the matching
@@ -170,14 +181,19 @@ def _iter_marked_prims(stage: Usd.Stage, marker_attr: str) -> Iterable[Usd.Prim]
 
 
 def _truthy_user_property(prim: Usd.Prim, attr_name: str) -> bool:
-    """Return True iff prim has attr_name with a non-zero / non-empty value.
+    """Return True iff prim has attr_name (or its non-prefixed variant)
+    with a non-zero / non-empty value.
 
-    Blender's USD exporter writes id_properties under `userProperties:`,
-    so the V-Sekai pre-export marker `material["v_sekai:mtoon"] = 1`
-    surfaces as `userProperties:v_sekai:mtoon`. Treat any non-zero
-    numeric, non-empty string, or True bool as the marker being set.
+    Blender's USD exporter historically wrote id_properties under
+    `userProperties:` (e.g. `userProperties:v_sekai:mtoon`); Blender
+    4.x writes them as raw attributes without the prefix
+    (`v_sekai:mtoon`). The hook accepts both so the same id_property
+    convention round-trips across Blender versions.
     """
     attr = prim.GetAttribute(attr_name)
+    if (not attr or not attr.IsValid()) and attr_name.startswith(USER_PROPERTIES_PREFIX):
+        # Fall back to the un-prefixed form for Blender 4.x output.
+        attr = prim.GetAttribute(attr_name[len(USER_PROPERTIES_PREFIX):])
     if not attr or not attr.IsValid():
         return False
     value = attr.Get()
@@ -251,6 +267,10 @@ def _copy_user_property_to_schema_attr(
     """
     source = prim.GetAttribute(USER_PROPERTIES_PREFIX + schema_attr_name)
     if not source or not source.IsValid():
+        # Blender 4.x writes id_properties as raw attributes without
+        # the userProperties: prefix; fall back to that form.
+        source = prim.GetAttribute(schema_attr_name)
+    if not source or not source.IsValid():
         return False
     value = source.Get()
     if value is None:
@@ -284,6 +304,175 @@ def _stamp_collider_attrs(prim: Usd.Prim) -> int:
     return n
 
 
+_SAFE_NAME_RE = re.compile(r"[^A-Za-z0-9_]")
+
+
+def _sanitise_prim_name(name: str, fallback: str) -> str:
+    """USD prim names must match Tf_IsValidIdentifier. Strip anything
+    outside [A-Za-z0-9_] and prepend an underscore if the result
+    starts with a digit. Empty names fall back to `fallback`."""
+    if not name:
+        return fallback
+    s = _SAFE_NAME_RE.sub("_", name)
+    if not s:
+        return fallback
+    if s[0].isdigit():
+        s = "_" + s
+    return s
+
+
+def _find_armature_config_blobs(stage: Usd.Stage) -> Iterable[tuple[Usd.Prim, str]]:
+    """Yield (armature_prim, json_blob) for every prim carrying the
+    spring-bone config side-channel attribute. Both userProperties:-
+    prefixed (Blender pre-4.x) and raw (Blender 4.x) forms accepted."""
+    for prim in stage.Traverse():
+        attr = prim.GetAttribute(SPRINGBONE_CONFIG_ATTR)
+        if not attr or not attr.IsValid():
+            attr = prim.GetAttribute(SPRINGBONE_CONFIG_ATTR[len(USER_PROPERTIES_PREFIX):])
+        if not attr or not attr.IsValid():
+            continue
+        value = attr.Get()
+        if not value or not isinstance(value, str):
+            continue
+        yield prim, value
+
+
+def _find_skelroot_for(armature_prim: Usd.Prim) -> Optional[Usd.Prim]:
+    """Find the SkelRoot most likely associated with the given Armature
+    prim. Blender's USD export puts the SkelRoot as either an ancestor,
+    sibling, or descendant of the Armature object's prim. Search order:
+    self → descendants → ancestors → siblings."""
+    if armature_prim.IsA(UsdSkel.Root):
+        return armature_prim
+    for desc in Usd.PrimRange(armature_prim):
+        if desc != armature_prim and desc.IsA(UsdSkel.Root):
+            return desc
+    cur = armature_prim.GetParent()
+    while cur and cur.IsValid() and not cur.IsPseudoRoot():
+        if cur.IsA(UsdSkel.Root):
+            return cur
+        for sib in cur.GetChildren():
+            if sib != armature_prim and sib.IsA(UsdSkel.Root):
+                return sib
+            for desc in Usd.PrimRange(sib):
+                if desc.IsA(UsdSkel.Root):
+                    return desc
+        cur = cur.GetParent()
+    return None
+
+
+def _synthesise_spring_prims_from_blob(
+    stage: Usd.Stage,
+    armature_prim: Usd.Prim,
+    blob: str,
+    counts: dict[str, int],
+) -> None:
+    """Parse a v_sekai:springBoneConfig JSON blob and emit one Xform
+    prim per chain + per collider under <SkelRoot>/SpringBones/, with
+    the V-Sekai API schemas applied. Idempotent — re-running overwrites
+    any prims already at the target paths."""
+    try:
+        config = json.loads(blob)
+    except json.JSONDecodeError:
+        counts["springConfig_parse_errors"] = counts.get("springConfig_parse_errors", 0) + 1
+        return
+
+    skelroot = _find_skelroot_for(armature_prim)
+    if skelroot is None:
+        counts["springConfig_no_skelroot"] = counts.get("springConfig_no_skelroot", 0) + 1
+        return
+
+    container_path = skelroot.GetPath().AppendChild("SpringBones")
+    container = stage.DefinePrim(container_path, "Scope")
+
+    used_names: set[str] = set()
+    def _unique(base: str) -> str:
+        # USD requires sibling-unique names; suffix on collision.
+        candidate = base
+        i = 1
+        while candidate in used_names or container.GetChild(candidate):
+            i += 1
+            candidate = f"{base}_{i}"
+        used_names.add(candidate)
+        return candidate
+
+    for chain in config.get("chains", []):
+        joints = chain.get("joints", [])
+        if not joints: continue
+        name = _unique(_sanitise_prim_name("Chain_" + chain.get("name", ""), "Chain"))
+        prim = stage.DefinePrim(container_path.AppendChild(name), "Xform")
+        _apply_api(prim, "VSekaiSpringBoneAPI")
+        counts["VSekaiSpringBoneAPI"] += 1
+        counts["springChains_synthesised"] = counts.get("springChains_synthesised", 0) + 1
+        # The chain's dynamics are joint-level in the addon. We use the
+        # FIRST joint as the chain-level representative — matching how
+        # VRM 1.0 / VRMC_springBone treats per-joint stiffness uniformly
+        # across a chain in the common authoring case. Per-joint
+        # divergence is captured in the parallel arrays below.
+        first = joints[0]
+        prim.CreateAttribute("v_sekai:springBone:stiffness", Sdf.ValueTypeNames.Float
+            ).Set(float(first.get("stiffness", 1.0)))
+        prim.CreateAttribute("v_sekai:springBone:drag", Sdf.ValueTypeNames.Float
+            ).Set(float(first.get("drag", 0.4)))
+        prim.CreateAttribute("v_sekai:springBone:gravityPower", Sdf.ValueTypeNames.Float
+            ).Set(float(first.get("gravityPower", 0.0)))
+        gd = first.get("gravityDir", [0.0, -1.0, 0.0])
+        prim.CreateAttribute("v_sekai:springBone:gravityDir", Sdf.ValueTypeNames.Vector3f
+            ).Set((float(gd[0]), float(gd[1]), float(gd[2])))
+        prim.CreateAttribute("v_sekai:springBone:hitRadius", Sdf.ValueTypeNames.Float
+            ).Set(float(first.get("hitRadius", 0.02)))
+        # Parallel arrays: one entry per joint, indexed by `joints`.
+        bone_tokens = [str(j.get("bone", "")) for j in joints]
+        prim.CreateAttribute("v_sekai:springBone:joints", Sdf.ValueTypeNames.TokenArray
+            ).Set(bone_tokens)
+        prim.CreateAttribute("v_sekai:springBone:perJointStiffness", Sdf.ValueTypeNames.FloatArray
+            ).Set([float(j.get("stiffness",     first.get("stiffness",     1.0))) for j in joints])
+        prim.CreateAttribute("v_sekai:springBone:perJointDrag", Sdf.ValueTypeNames.FloatArray
+            ).Set([float(j.get("drag",          first.get("drag",          0.4))) for j in joints])
+        prim.CreateAttribute("v_sekai:springBone:perJointHitRadius", Sdf.ValueTypeNames.FloatArray
+            ).Set([float(j.get("hitRadius",     first.get("hitRadius",     0.02))) for j in joints])
+        groups = chain.get("colliderGroups", [])
+        if groups:
+            prim.CreateAttribute("v_sekai:springBone:colliderGroups", Sdf.ValueTypeNames.TokenArray
+                ).Set([str(g) for g in groups])
+
+    for col in config.get("colliders", []):
+        bone = col.get("attachedBone", "")
+        if not bone: continue
+        name = _unique(_sanitise_prim_name(
+            "Collider_" + (col.get("name") or bone), "Collider"))
+        prim = stage.DefinePrim(container_path.AppendChild(name), "Xform")
+        _apply_api(prim, "VSekaiSpringBoneColliderAPI")
+        counts["VSekaiSpringBoneColliderAPI"] += 1
+        counts["springColliders_synthesised"] = counts.get("springColliders_synthesised", 0) + 1
+        prim.CreateAttribute("v_sekai:springBone:collider:attachedBone", Sdf.ValueTypeNames.Token
+            ).Set(str(bone))
+        shape = str(col.get("shape", "sphere"))
+        prim.CreateAttribute("v_sekai:springBone:collider:shape", Sdf.ValueTypeNames.Token
+            ).Set(shape)
+        prim.CreateAttribute("v_sekai:springBone:collider:radius", Sdf.ValueTypeNames.Float
+            ).Set(float(col.get("radius", 0.05)))
+        off = col.get("offset", [0.0, 0.0, 0.0])
+        prim.CreateAttribute("v_sekai:springBone:collider:offset", Sdf.ValueTypeNames.Vector3f
+            ).Set((float(off[0]), float(off[1]), float(off[2])))
+        if shape == "capsule" and "tail" in col:
+            tail = col["tail"]
+            prim.CreateAttribute("v_sekai:springBone:collider:tail", Sdf.ValueTypeNames.Vector3f
+                ).Set((float(tail[0]), float(tail[1]), float(tail[2])))
+
+    # Collider-groups: a list of named groups, each holding a list of
+    # collider names. Emit as a single token[] array attribute keyed by
+    # group name on the SpringBones scope itself.
+    for grp in config.get("colliderGroups", []):
+        gname = grp.get("name", "")
+        members = grp.get("colliders", [])
+        if not gname: continue
+        safe = _sanitise_prim_name(gname, "Group")
+        container.CreateAttribute(
+            f"v_sekai:springBone:colliderGroup:{safe}",
+            Sdf.ValueTypeNames.TokenArray).Set([str(m) for m in members])
+
+
 def apply_v_sekai_schemas(stage: Usd.Stage) -> dict[str, int]:
     """Apply V-Sekai API schemas across the stage. Returns counts per API."""
     counts = {
@@ -298,6 +487,13 @@ def apply_v_sekai_schemas(stage: Usd.Stage) -> dict[str, int]:
             _apply_api(prim, "VSekaiMToonAPI")
             counts["VSekaiMToonAPI"] += 1
             counts["mtoon_attrs_stamped"] += _stamp_mtoon_attrs(prim)
+
+    # Side-channel synthesis FIRST: the JSON blob on the Armature prim
+    # gets unpacked into sibling Xform prims under the SkelRoot. The
+    # marker-attribute pass below then picks up any direct bone-prim
+    # markers (which Blender pre-4.x produced for Empty-based rigs).
+    for armature_prim, blob in _find_armature_config_blobs(stage):
+        _synthesise_spring_prims_from_blob(stage, armature_prim, blob, counts)
 
     for prim in _iter_marked_prims(stage, SPRINGBONE_MARKER_ATTR):
         _apply_api(prim, "VSekaiSpringBoneAPI")

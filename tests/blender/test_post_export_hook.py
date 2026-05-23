@@ -167,3 +167,136 @@ def test_falsy_marker_skips(tmp_path: Path) -> None:
     counts = post_export_hook.apply_v_sekai_schemas(stage)
     assert not plain.HasAPI("VSekaiMToonAPI")
     assert counts["VSekaiMToonAPI"] == 1, "False marker should not trigger application"
+
+
+# ---- Side-channel spring config blob synthesis ----------------------
+#
+# The pre-export mirror writes a JSON blob to a v_sekai:springBoneConfig
+# id_property on the Armature object — surfaces as a userProperties:*
+# string attribute on the corresponding USD Xform prim. The hook parses
+# it and synthesises sibling Xform prims under the SkelRoot, since
+# UsdSkel joints are tokens in an array and can't carry API schemas
+# directly. See post_export_hook._synthesise_spring_prims_from_blob.
+
+def _make_stage_with_armature(path: Path, blob: str) -> Usd.Stage:
+    """Minimal stage: Avatar / Armature (with the config blob) / SkelRoot
+    with a Skeleton inside. Mimics Blender's USD export of a VRM-flavoured
+    rig where the addon's spring_bone1 table has been serialised to JSON."""
+    import json as _json
+    stage = Usd.Stage.CreateNew(str(path))
+    root = UsdGeom.Xform.Define(stage, "/Avatar")
+    stage.SetDefaultPrim(root.GetPrim())
+    # The "Armature" object — Blender exports it as an Xform alongside
+    # the SkelRoot. The blob lives on this prim.
+    arm = UsdGeom.Xform.Define(stage, "/Avatar/Armature")
+    arm.GetPrim().CreateAttribute(
+        "userProperties:v_sekai:springBoneConfig",
+        Sdf.ValueTypeNames.String).Set(blob)
+    # The SkelRoot (sibling of Armature).
+    from pxr import UsdSkel as _UsdSkel
+    sr = _UsdSkel.Root.Define(stage, "/Avatar/Skel_SkelRoot")
+    _UsdSkel.Skeleton.Define(stage, "/Avatar/Skel_SkelRoot/Skeleton")
+    stage.GetRootLayer().Save()
+    return stage
+
+
+_REPRESENTATIVE_BLOB = """{
+  "chains":[
+    {"name":"Hair.Back","joints":[
+      {"bone":"Hair_Back_0","stiffness":1.0,"drag":0.4,"gravityPower":0.0,
+       "gravityDir":[0.0,-1.0,0.0],"hitRadius":0.02},
+      {"bone":"Hair_Back_1","stiffness":1.0,"drag":0.4,"gravityPower":0.0,
+       "gravityDir":[0.0,-1.0,0.0],"hitRadius":0.02}
+    ],"colliderGroups":["HeadGroup"]}
+  ],
+  "colliders":[
+    {"name":"Head","attachedBone":"Head","shape":"sphere",
+     "radius":0.10,"offset":[0.0,0.05,0.0]},
+    {"name":"ChestCap","attachedBone":"Chest","shape":"capsule",
+     "radius":0.08,"offset":[0.0,0.0,0.0],"tail":[0.0,0.2,0.0]}
+  ],
+  "colliderGroups":[
+    {"name":"HeadGroup","colliders":["Head","ChestCap"]}
+  ]
+}"""
+
+
+def test_spring_synthesis_fires_when_blob_present(tmp_path: Path) -> None:
+    p = tmp_path / "stage.usda"
+    _make_stage_with_armature(p, _REPRESENTATIVE_BLOB)
+    stage = Usd.Stage.Open(str(p))
+    counts = post_export_hook.apply_v_sekai_schemas(stage)
+
+    assert counts.get("springChains_synthesised") == 1
+    assert counts.get("springColliders_synthesised") == 2
+    # The synthesised chain prim should exist + carry the API.
+    chain = stage.GetPrimAtPath("/Avatar/Skel_SkelRoot/SpringBones/Chain_Hair_Back")
+    assert chain.IsValid(), "chain prim was not synthesised at the expected path"
+    assert chain.HasAPI("VSekaiSpringBoneAPI"), "VSekaiSpringBoneAPI not applied"
+    joints = chain.GetAttribute("v_sekai:springBone:joints").Get()
+    assert list(joints) == ["Hair_Back_0", "Hair_Back_1"]
+    assert chain.GetAttribute("v_sekai:springBone:stiffness").Get() == pytest.approx(1.0)
+
+
+def test_spring_synthesis_no_op_without_blob(tmp_path: Path) -> None:
+    p = tmp_path / "stage.usda"
+    # Create a stage WITHOUT the blob attribute.
+    stage = Usd.Stage.CreateNew(str(p))
+    UsdGeom.Xform.Define(stage, "/Avatar")
+    from pxr import UsdSkel as _UsdSkel
+    _UsdSkel.Root.Define(stage, "/Avatar/Skel_SkelRoot")
+    stage.GetRootLayer().Save()
+    stage = Usd.Stage.Open(str(p))
+    counts = post_export_hook.apply_v_sekai_schemas(stage)
+    assert counts.get("springChains_synthesised", 0) == 0
+    assert counts.get("springColliders_synthesised", 0) == 0
+    # No SpringBones scope should have been created.
+    assert not stage.GetPrimAtPath("/Avatar/Skel_SkelRoot/SpringBones").IsValid()
+
+
+def test_spring_synthesis_collider_attrs(tmp_path: Path) -> None:
+    p = tmp_path / "stage.usda"
+    _make_stage_with_armature(p, _REPRESENTATIVE_BLOB)
+    stage = Usd.Stage.Open(str(p))
+    post_export_hook.apply_v_sekai_schemas(stage)
+
+    head = stage.GetPrimAtPath("/Avatar/Skel_SkelRoot/SpringBones/Collider_Head")
+    assert head.IsValid()
+    assert head.HasAPI("VSekaiSpringBoneColliderAPI")
+    assert str(head.GetAttribute("v_sekai:springBone:collider:attachedBone").Get()) == "Head"
+    assert str(head.GetAttribute("v_sekai:springBone:collider:shape").Get()) == "sphere"
+    assert head.GetAttribute("v_sekai:springBone:collider:radius").Get() == pytest.approx(0.10)
+    # Sphere — no tail attribute should be created.
+    assert not head.GetAttribute("v_sekai:springBone:collider:tail").IsValid()
+
+    chest = stage.GetPrimAtPath("/Avatar/Skel_SkelRoot/SpringBones/Collider_ChestCap")
+    assert chest.IsValid()
+    assert str(chest.GetAttribute("v_sekai:springBone:collider:shape").Get()) == "capsule"
+    tail = chest.GetAttribute("v_sekai:springBone:collider:tail").Get()
+    # Vec3f is float32 — exact-equality against double literals would
+    # fail on round-trip noise (0.2 → 0.20000000298023224 etc).
+    assert tuple(tail) == pytest.approx((0.0, 0.2, 0.0), abs=1e-6)
+
+
+def test_spring_synthesis_collider_groups(tmp_path: Path) -> None:
+    p = tmp_path / "stage.usda"
+    _make_stage_with_armature(p, _REPRESENTATIVE_BLOB)
+    stage = Usd.Stage.Open(str(p))
+    post_export_hook.apply_v_sekai_schemas(stage)
+
+    container = stage.GetPrimAtPath("/Avatar/Skel_SkelRoot/SpringBones")
+    grp = container.GetAttribute("v_sekai:springBone:colliderGroup:HeadGroup").Get()
+    assert list(grp) == ["Head", "ChestCap"]
+
+    chain = stage.GetPrimAtPath("/Avatar/Skel_SkelRoot/SpringBones/Chain_Hair_Back")
+    chain_grps = chain.GetAttribute("v_sekai:springBone:colliderGroups").Get()
+    assert list(chain_grps) == ["HeadGroup"]
+
+
+def test_spring_synthesis_bad_json_doesnt_crash(tmp_path: Path) -> None:
+    p = tmp_path / "stage.usda"
+    _make_stage_with_armature(p, "{ this is not json")
+    stage = Usd.Stage.Open(str(p))
+    counts = post_export_hook.apply_v_sekai_schemas(stage)
+    assert counts.get("springConfig_parse_errors") == 1
+    assert counts.get("springChains_synthesised", 0) == 0

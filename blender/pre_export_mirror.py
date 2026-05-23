@@ -295,7 +295,7 @@ def mirror_all() -> dict[str, int]:
         sb = getattr(ext, "spring_bone1", None)
         if sb is None:
             continue
-        for chain in getattr(sb, "spring_bones", []):
+        for chain in getattr(sb, "springs", getattr(sb, "spring_bones", [])):
             n_joints, n_marked = _mirror_springbone_chain(armature_obj, chain)
             if n_marked > 0:
                 counts["chains_marked"] += 1
@@ -304,7 +304,124 @@ def mirror_all() -> dict[str, int]:
             if _mirror_collider(armature_obj, collider):
                 counts["colliders_marked"] += 1
 
+        # Side-channel blob: bone id_properties don't survive Blender's
+        # USD export (joints are tokens in an array, not separate prims
+        # — UsdSkel design, see openusd.org/dev/api/_usd_skel__schemas
+        # .html). Workaround: serialise the chain + collider table as
+        # JSON onto the Armature OBJECT's id_properties, which Blender
+        # DOES surface as userProperties:* on the corresponding USD
+        # Xform. The post-export hook reads it and synthesises sibling
+        # Xform prims under the SkelRoot the way
+        # idtx_core_export_avatar_to_usd would.
+        _stamp_spring_config_blob(armature_obj, sb)
+        if (counts["chains_marked"] > 0 or counts["colliders_marked"] > 0):
+            counts.setdefault("blob_stamped", 0)
+            counts["blob_stamped"] += 1
+
     return counts
+
+
+def _stamp_spring_config_blob(armature_obj: Any, sb: Any) -> None:
+    """Serialise the addon's spring_bone1 state into a JSON id_property
+    on the Armature OBJECT. The post-export hook reads
+    userProperties:v_sekai:springBoneConfig (Blender surfaces id_
+    properties on Xform-equivalent objects directly) and synthesises
+    the missing per-bone Xform structure on the USD side.
+    """
+    import json
+
+    def _from_joint_or_chain(j: Any, chain: Any, attr: str, default: Any) -> Any:
+        # Match _mirror_springbone_chain: prefer chain-level value when
+        # present (older vrm-addon shape), fall back to joint (newer
+        # shape). This way bone markers and the blob agree.
+        v = getattr(chain, attr, None)
+        if v is None: v = getattr(j, attr, None)
+        return default if v is None else v
+
+    chains: list[dict] = []
+    for chain in getattr(sb, "springs", getattr(sb, "spring_bones", [])):
+        joints_data: list[dict] = []
+        for j in getattr(chain, "joints", []):
+            ref = getattr(j, "node", None)
+            bone_name = getattr(ref, "bone_name", None) if not isinstance(ref, str) else ref
+            if bone_name is None: continue
+            joints_data.append({
+                "bone":         str(bone_name),
+                "stiffness":    float(_from_joint_or_chain(j, chain, "stiffness",     1.0)),
+                "drag":         float(_from_joint_or_chain(j, chain, "drag_force",    0.4)),
+                "gravityPower": float(_from_joint_or_chain(j, chain, "gravity_power", 0.0)),
+                "gravityDir":   _vec3_or_default(
+                    _from_joint_or_chain(j, chain, "gravity_dir", None), (0.0, -1.0, 0.0)),
+                "hitRadius":    float(_from_joint_or_chain(j, chain, "hit_radius",    0.02)),
+            })
+        if not joints_data: continue
+        # Collider-group references (which colliders this chain hits).
+        group_refs: list[str] = []
+        for gref in getattr(chain, "collider_groups", []):
+            name = getattr(gref, "collider_group_name", None)
+            if name: group_refs.append(str(name))
+        chains.append({
+            "name":          str(getattr(chain, "vrm_name", "")),
+            "joints":        joints_data,
+            "colliderGroups": group_refs,
+        })
+
+    colliders_data: list[dict] = []
+    for col in getattr(sb, "colliders", []):
+        ref = getattr(col, "node", None)
+        bone_name = getattr(ref, "bone_name", None) if not isinstance(ref, str) else ref
+        if bone_name is None: continue
+        shape = getattr(col, "shape", None)
+        sphere = getattr(shape, "sphere", None) if shape else None
+        capsule = getattr(shape, "capsule", None) if shape else None
+        entry: dict = {
+            "name":         str(getattr(col, "vrm_name", "")),
+            "attachedBone": str(bone_name),
+        }
+        if capsule is not None and getattr(capsule, "tail", None) is not None:
+            entry["shape"]  = "capsule"
+            entry["radius"] = float(getattr(capsule, "radius", 0.05))
+            entry["offset"] = _vec3_or_default(getattr(capsule, "offset", None), (0.0, 0.0, 0.0))
+            entry["tail"]   = _vec3_or_default(getattr(capsule, "tail",   None), (0.0, 0.0, 0.0))
+        else:
+            entry["shape"]  = "sphere"
+            entry["radius"] = float(getattr(sphere, "radius", 0.05) if sphere else 0.05)
+            entry["offset"] = _vec3_or_default(
+                getattr(sphere, "offset", None) if sphere else None, (0.0, 0.0, 0.0))
+        colliders_data.append(entry)
+
+    groups_data: list[dict] = []
+    for group in getattr(sb, "collider_groups", []):
+        members: list[str] = []
+        for entry in getattr(group, "colliders", []):
+            collider_name = getattr(entry, "collider_name", None)
+            if collider_name: members.append(str(collider_name))
+        groups_data.append({
+            "name":      str(getattr(group, "vrm_name", "")),
+            "colliders": members,
+        })
+
+    if not chains and not colliders_data:
+        # Clear any stale blob from a prior run.
+        if "v_sekai:springBoneConfig" in armature_obj.keys():
+            del armature_obj["v_sekai:springBoneConfig"]
+        return
+
+    payload = json.dumps({
+        "chains":         chains,
+        "colliders":      colliders_data,
+        "colliderGroups": groups_data,
+    }, separators=(",", ":"))
+    armature_obj["v_sekai:springBoneConfig"] = payload
+
+
+def _vec3_or_default(v: Any, default: tuple[float, float, float]) -> list[float]:
+    if v is None:
+        return list(default)
+    try:
+        return [float(v[0]), float(v[1]), float(v[2])]
+    except (TypeError, IndexError):
+        return list(default)
 
 
 def main() -> int:

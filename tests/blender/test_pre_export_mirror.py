@@ -74,8 +74,13 @@ class _Armature(_Datablock):
         self.vrm_addon_extension = types.SimpleNamespace(spring_bone1=None)
 
 
-class _ArmatureObject:
+class _ArmatureObject(_Datablock):
+    """Blender's Armature OBJECT (not the underlying data). The pre-
+    export mirror stamps the side-channel spring config blob on THIS,
+    not the armature data — so it needs to be a dict-like id_property
+    bag the same way materials/bones are."""
     def __init__(self, armature: _Armature) -> None:
+        super().__init__(armature.name)
         self.type = "ARMATURE"
         self.data = armature
 
@@ -224,3 +229,108 @@ def test_addon_not_installed_is_no_op(bpy_mock):
     counts = pre_export_mirror.mirror_all()
     assert counts["materials_marked"] == 0
     assert list(mat.keys()) == []
+
+
+# ---- Side-channel spring config blob stamping -----------------------
+#
+# UsdSkel joints are tokens in an array, not prims — Blender's USD
+# export can't carry per-bone id_properties through. The mirror's
+# workaround is to serialise the addon's spring_bone1 state into a
+# JSON id_property on the Armature OBJECT, which DOES surface as a
+# userProperties:* attribute. The post-export hook then parses it and
+# synthesises sibling Xform prims.
+
+def _make_armature_with_springs(arm_name="Armature"):
+    """Build an Armature object whose RNA state has one chain (2 joints)
+    + one sphere collider + one collider group referencing both."""
+    arm = _Armature(arm_name)
+    arm.bones.add("Hair_L_0")
+    arm.bones.add("Hair_L_1")
+    arm.bones.add("Head")
+    arm.bones.add("Chest")
+
+    def _node_ref(bone_name: str):
+        # vrm-addon-for-blender exposes the joint's bone reference as
+        # a struct with a .bone_name field. The blob writer reads that.
+        return types.SimpleNamespace(bone_name=bone_name)
+
+    chain = types.SimpleNamespace(
+        vrm_name="Hair.L",
+        joints=[
+            types.SimpleNamespace(
+                node=_node_ref("Hair_L_0"),
+                stiffness=1.0, drag_force=0.4, gravity_power=0.0,
+                gravity_dir=(0.0, -1.0, 0.0), hit_radius=0.02),
+            types.SimpleNamespace(
+                node=_node_ref("Hair_L_1"),
+                stiffness=0.8, drag_force=0.5, gravity_power=0.1,
+                gravity_dir=(0.0, -1.0, 0.0), hit_radius=0.03),
+        ],
+        collider_groups=[
+            types.SimpleNamespace(collider_group_name="HeadGroup")])
+
+    head_collider = types.SimpleNamespace(
+        vrm_name="Head",
+        node=_node_ref("Head"),
+        shape=types.SimpleNamespace(
+            sphere=types.SimpleNamespace(
+                radius=0.10, offset=(0.0, 0.05, 0.0)),
+            capsule=types.SimpleNamespace(tail=None)))
+
+    grp = types.SimpleNamespace(
+        vrm_name="HeadGroup",
+        colliders=[types.SimpleNamespace(collider_name="Head")])
+
+    # The full spring_bone1 namespace (both `springs` and `spring_bones`
+    # accessors work — the mirror tries `springs` first).
+    arm.vrm_addon_extension.spring_bone1 = types.SimpleNamespace(
+        springs=[chain], spring_bones=[chain],
+        colliders=[head_collider], collider_groups=[grp])
+    return arm
+
+
+def test_spring_config_blob_stamped(bpy_mock):
+    import json
+    import pre_export_mirror
+
+    arm = _make_armature_with_springs()
+    arm_obj = _ArmatureObject(arm)
+    bpy_mock.data.objects.append(arm_obj)
+
+    pre_export_mirror.mirror_all()
+    blob = arm_obj["v_sekai:springBoneConfig"]
+    config = json.loads(blob)
+
+    assert len(config["chains"]) == 1
+    chain = config["chains"][0]
+    assert chain["name"] == "Hair.L"
+    assert [j["bone"] for j in chain["joints"]] == ["Hair_L_0", "Hair_L_1"]
+    assert chain["joints"][0]["stiffness"] == 1.0
+    assert chain["joints"][1]["drag"] == 0.5
+    assert chain["colliderGroups"] == ["HeadGroup"]
+
+    assert len(config["colliders"]) == 1
+    col = config["colliders"][0]
+    assert col["attachedBone"] == "Head"
+    assert col["shape"] == "sphere"
+    assert col["radius"] == 0.10
+    assert col["offset"] == [0.0, 0.05, 0.0]
+
+    assert len(config["colliderGroups"]) == 1
+    assert config["colliderGroups"][0]["colliders"] == ["Head"]
+
+
+def test_spring_config_blob_cleared_when_empty(bpy_mock):
+    import pre_export_mirror
+
+    arm = _Armature()
+    # Pretend a previous run left a blob behind.
+    arm_obj = _ArmatureObject(arm)
+    arm_obj["v_sekai:springBoneConfig"] = '{"chains":[],"colliders":[]}'
+    # Current RNA state: addon present but no chains / colliders.
+    arm.vrm_addon_extension.spring_bone1 = types.SimpleNamespace(
+        springs=[], colliders=[], collider_groups=[])
+    bpy_mock.data.objects.append(arm_obj)
+
+    pre_export_mirror.mirror_all()
+    assert "v_sekai:springBoneConfig" not in arm_obj
