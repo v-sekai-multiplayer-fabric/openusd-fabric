@@ -208,10 +208,28 @@ def mToonToScss (m : MToonParams) : ScssParams :=
   , alphaSharp := zWriteToScssAlphaSharp m.transparentWithZWrite
   }
 
-/-- Round-trip identity on the recoverable subset. We pick an MToon
-    value whose corresponding SCSS state has shadow=0.5 and the
-    matcapStrength baked into matcapFactor, so the round trip is
-    bit-stable. -/
+/-- **Round-trip is NOT general over MToonParams.** The reverse
+    pin `invertScssShadowToColour` clamps SCSS `_Shadow` to 0.5,
+    discarding information whenever the source SCSS shadow != 0.5.
+    `mToonToScss` also drops `shadingToony` and `rimLightingMix`
+    (no SCSS analogue — both default-restored on the way back).
+
+    The recoverable subset is the set of MToonParams whose pre-image
+    under `scssToMToon` exists with the reverse-pin constants. The
+    example below is one such input — useful as a regression test
+    but does not generalise to arbitrary MToon values.
+
+    See `lossyMToonOnly` for the full list of MToon-only fields. -/
+def isOnRoundTripSubset (m : MToonParams) : Bool :=
+  -- 1. shadingToony pinned to the reverse-trip default 0.9.
+  m.shadingToony == 0.9 &&
+  -- 2. rimLightingMix pinned to the reverse-trip default 0.0.
+  m.rimLightingMix == 0.0 &&
+  -- 3. Shade colour within the representable shadow=0.5 band: each
+  --    channel <= 0.75 so invertScssShadowToColour does not clamp.
+  m.shadeColorR <= 0.75 && m.shadeColorG <= 0.75 && m.shadeColorB <= 0.75
+
+/-- Round-trip identity on the recoverable subset. -/
 example :
     let m : MToonParams := {
       baseColorR := 0.4, baseColorG := 0.5, baseColorB := 0.6, baseColorA := 1.0
@@ -227,7 +245,17 @@ example :
       outlineWidth := 0.002
       outlineColorR := 0.1, outlineColorG := 0.1, outlineColorB := 0.1
       transparentWithZWrite := false }
+    -- The input IS on the recoverable subset.
+    isOnRoundTripSubset m = true ∧
+    -- And on that subset the round-trip recovers it exactly.
     scssToMToon (mToonToScss m) == m := by native_decide
+
+/-- Counter-example: an MToon with `shadingToony` != 0.9 falls
+    outside the recoverable subset (and the round-trip drops the
+    custom toony value). Documents the limit explicitly. -/
+example :
+    let m : MToonParams := { shadingToony := 0.5 }
+    isOnRoundTripSubset m = false := by native_decide
 
 /-- One entry of the SCSS<->MToon mapping table. Used by `bridgeRows`
     (the single source of truth) and `genRowJson` (emission). -/
