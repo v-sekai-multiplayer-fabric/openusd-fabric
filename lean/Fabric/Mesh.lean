@@ -6,3 +6,4 @@
 -- other GPU compute that goes through the LeanSlang DSL.
 
 import Fabric.Mesh.OutlineJFA
+import Fabric.Mesh.TrisToQuadsGPU
