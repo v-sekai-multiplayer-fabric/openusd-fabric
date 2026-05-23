@@ -378,7 +378,14 @@ def _stamp_spring_config_blob(armature_obj: Any, sb: Any) -> None:
             "name":         str(getattr(col, "vrm_name", "")),
             "attachedBone": str(bone_name),
         }
-        if capsule is not None and getattr(capsule, "tail", None) is not None:
+        # vrm-addon's actual discriminator: `col.shape_type` is an
+        # EnumProperty with values "Sphere" / "Capsule". Both
+        # `shape.sphere` AND `shape.capsule` sub-objects ALWAYS exist
+        # (default-constructed) regardless of which the author picked,
+        # so a `capsule.tail is not None` check misclassifies every
+        # sphere as a capsule.
+        is_capsule = str(getattr(col, "shape_type", "Sphere")).lower() == "capsule"
+        if is_capsule and capsule is not None:
             entry["shape"]  = "capsule"
             entry["radius"] = float(getattr(capsule, "radius", 0.05))
             entry["offset"] = _vec3_or_default(getattr(capsule, "offset", None), (0.0, 0.0, 0.0))

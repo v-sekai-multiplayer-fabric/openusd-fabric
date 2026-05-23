@@ -371,6 +371,53 @@ def _find_skelroot_for(armature_prim: Usd.Prim) -> Optional[Usd.Prim]:
     return None
 
 
+def _find_skeleton_for(armature_prim: Usd.Prim, skelroot: Usd.Prim) -> Optional[Usd.Prim]:
+    """Find the Skeleton the meshes inside `skelroot` actually bind to
+    via their `skel:skeleton` relationship. This is the well-specified
+    UsdSkel lookup
+    (https://openusd.org/dev/api/_usd_skel__schemas.html#UsdSkel_Skeleton)
+    — preferred over `armature_prim`'s subtree because Blender's USD
+    exporter scatters multiple Skeleton prims (one per Mesh as a
+    skinning proxy, plus the authoritative armature). Only the
+    majority-bound one is the VRM skeleton."""
+    # 1. Skeleton directly under armature_prim (Blender ARMATURE-object
+    #    Xform with a child Skeleton — this is the canonical layout
+    #    when there's a single armature with no proxies).
+    for desc in Usd.PrimRange(armature_prim):
+        if desc != armature_prim and desc.IsA(UsdSkel.Skeleton):
+            return desc
+    # 2. UsdSkel binding lookup: ask the meshes which Skeleton they're
+    #    actually skinned to. Majority wins.
+    from collections import Counter
+    counts: Counter = Counter()
+    for desc in Usd.PrimRange(skelroot):
+        if not desc.IsA(UsdGeom.Mesh): continue
+        rel = desc.GetRelationship("skel:skeleton")
+        if not rel: continue
+        for t in rel.GetTargets():
+            counts[str(t)] += 1
+    if counts:
+        winner_path, _ = counts.most_common(1)[0]
+        sk = skelroot.GetStage().GetPrimAtPath(winner_path)
+        if sk.IsValid() and sk.IsA(UsdSkel.Skeleton):
+            return sk
+    # 3. Fallback: first Skeleton in tree order (degenerate fixtures
+    #    with no skinned meshes at all).
+    for desc in Usd.PrimRange(skelroot):
+        if desc.IsA(UsdSkel.Skeleton):
+            return desc
+    return None
+
+
+def _sanitise_bone_name(name: str) -> str:
+    """Blender's USD exporter converts dot-separated bone names
+    (`Hair.Back.001`) to underscore (`Hair_Back_001`) when writing
+    them into UsdSkelSkeleton.joints[]. The blob the pre-export
+    mirror writes carries the original RNA names; match against
+    Skeleton joints uses the underscore form."""
+    return name.replace(".", "_")
+
+
 def _synthesise_spring_prims_from_blob(
     stage: Usd.Stage,
     armature_prim: Usd.Prim,
@@ -399,11 +446,7 @@ def _synthesise_spring_prims_from_blob(
     # name of each Sdf path), and resolve collider-name → flat
     # walk-order index via a name table built as we emit colliders.
     bone_to_joint_idx: dict[str, int] = {}
-    skel_prim = None
-    for desc in Usd.PrimRange(skelroot):
-        if desc.IsA(UsdSkel.Skeleton):
-            skel_prim = desc
-            break
+    skel_prim = _find_skeleton_for(armature_prim, skelroot)
     if skel_prim is not None:
         joints_attr = skel_prim.GetAttribute("joints")
         if joints_attr and joints_attr.IsValid():
@@ -412,7 +455,15 @@ def _synthesise_spring_prims_from_blob(
                 bone_to_joint_idx[leaf] = i
                 bone_to_joint_idx[str(jp)] = i  # also full-path form
 
+    # Idempotency: if a prior hook invocation already populated the
+    # SpringBones scope, wipe it first. Otherwise a second run would
+    # stack synthesised prims on top of the old ones (USD's DefinePrim
+    # is upsert-like for the parent but child prims accrete).
     container_path = skelroot.GetPath().AppendChild("SpringBones")
+    existing = stage.GetPrimAtPath(container_path)
+    if existing and existing.IsValid():
+        for child in list(existing.GetChildren()):
+            stage.RemovePrim(child.GetPath())
     container = stage.DefinePrim(container_path, "Scope")
 
     # Build a (group name → [collider name]) lookup so chains that
@@ -454,7 +505,11 @@ def _synthesise_spring_prims_from_blob(
         counts["springColliders_synthesised"] = counts.get("springColliders_synthesised", 0) + 1
         collider_name_to_idx[col_name_src] = len(collider_name_to_idx)
         # attachedBone is an int index into the Skeleton's `joints`.
-        attached_idx = bone_to_joint_idx.get(str(bone), -1)
+        # Try the raw name first (case where Blender didn't mangle),
+        # then the underscore-sanitised form (Blender's USD-export
+        # convention).
+        attached_idx = bone_to_joint_idx.get(str(bone),
+                       bone_to_joint_idx.get(_sanitise_bone_name(str(bone)), -1))
         prim.CreateAttribute("v_sekai:springBone:collider:attachedBone",
             Sdf.ValueTypeNames.Int).Set(attached_idx)
         shape = str(col.get("shape", "sphere"))
@@ -504,11 +559,13 @@ def _synthesise_spring_prims_from_blob(
         # joints: int[] indices into the Skeleton's `joints` array.
         # Bones the resolver can't match drop out — better than a
         # poisoned -1 sentinel that would index out-of-bounds later.
+        # Try raw + underscore-sanitised forms.
         joint_indices: list[int] = []
         joint_names_kept: list[str] = []
         for j in joints:
             bone_name = str(j.get("bone", ""))
-            idx = bone_to_joint_idx.get(bone_name, -1)
+            idx = bone_to_joint_idx.get(bone_name,
+                  bone_to_joint_idx.get(_sanitise_bone_name(bone_name), -1))
             if idx >= 0:
                 joint_indices.append(idx)
                 joint_names_kept.append(bone_name)
@@ -520,18 +577,20 @@ def _synthesise_spring_prims_from_blob(
         prim.CreateAttribute("v_sekai:springBone:jointNames",
             Sdf.ValueTypeNames.TokenArray, custom=True).Set(joint_names_kept)
         # Per-joint divergence (matches the surviving joint set).
+        # Same sanitise-then-lookup logic as the joint_indices loop above.
+        def _idx_of(j_dict: dict) -> int:
+            bn = str(j_dict.get("bone", ""))
+            return bone_to_joint_idx.get(bn,
+                   bone_to_joint_idx.get(_sanitise_bone_name(bn), -1))
         prim.CreateAttribute("v_sekai:springBone:perJointStiffness", Sdf.ValueTypeNames.FloatArray
             ).Set([float(j.get("stiffness",     first.get("stiffness",     1.0)))
-                   for j, idx in zip(joints, [bone_to_joint_idx.get(str(j.get("bone","")), -1)
-                                              for j in joints]) if idx >= 0])
+                   for j in joints if _idx_of(j) >= 0])
         prim.CreateAttribute("v_sekai:springBone:perJointDrag", Sdf.ValueTypeNames.FloatArray
             ).Set([float(j.get("drag",          first.get("drag",          0.4)))
-                   for j, idx in zip(joints, [bone_to_joint_idx.get(str(j.get("bone","")), -1)
-                                              for j in joints]) if idx >= 0])
+                   for j in joints if _idx_of(j) >= 0])
         prim.CreateAttribute("v_sekai:springBone:perJointHitRadius", Sdf.ValueTypeNames.FloatArray
             ).Set([float(j.get("hitRadius",     first.get("hitRadius",     0.02)))
-                   for j, idx in zip(joints, [bone_to_joint_idx.get(str(j.get("bone","")), -1)
-                                              for j in joints]) if idx >= 0])
+                   for j in joints if _idx_of(j) >= 0])
         groups = chain.get("colliderGroups", [])
         if groups:
             prim.CreateAttribute("v_sekai:springBone:colliderGroups", Sdf.ValueTypeNames.TokenArray
