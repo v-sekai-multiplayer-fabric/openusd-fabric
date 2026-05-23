@@ -39,6 +39,8 @@ private def artifacts : List (String × String) :=
     , Fabric.VrmUpgrade.SpringBoneFields.jsonSource )
   , ( "shaders/tris_to_quads_match.slang"
     , Fabric.Mesh.TrisToQuadsGPU.slangSource )
+  , ( "shaders/jfa_step.slang"
+    , Fabric.Mesh.OutlineJFA.jfaStepSlangSource )
   ]
 
 def main (args : List String) : IO UInt32 := do
