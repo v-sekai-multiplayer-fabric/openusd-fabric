@@ -5,7 +5,7 @@
             "Type": "resource",
             "Info": {
                 "UsdSchemas": {
-                    "schemaPath": "./v_sekai_schema.usda"
+                    "schemaPath": "./generatedSchema.usda"
                 },
                 "Types": {
                     "VSekaiMToonAPI": {

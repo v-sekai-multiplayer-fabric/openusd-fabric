@@ -7,7 +7,10 @@ venv/
 
 # USD build/cache artifacts
 *.usdc
-generatedSchema.usda
+# NOTE: schema/generatedSchema.usda IS committed — for codeless
+# schemas, it's the runtime registration source, not a build
+# artifact. (Only ignored if it shows up elsewhere via a code-
+# generated schema build.)
 
 # Build outputs (slangc -> GLSL, CMake, pixi)
 build/

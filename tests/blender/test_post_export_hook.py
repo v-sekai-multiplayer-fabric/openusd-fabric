@@ -281,8 +281,13 @@ def test_spring_synthesis_collider_attrs(tmp_path: Path) -> None:
             == "Head")
     assert str(head.GetAttribute("v_sekai:springBone:collider:shape").Get()) == "sphere"
     assert head.GetAttribute("v_sekai:springBone:collider:radius").Get() == pytest.approx(0.10)
-    # Sphere — no tail attribute should be created.
-    assert not head.GetAttribute("v_sekai:springBone:collider:tail").IsValid()
+    # Sphere — no tail value should be AUTHORED. The codeless-schema
+    # registration declares the attr with a default, so .IsValid() is
+    # True; HasAuthoredValue() distinguishes "set by us" from
+    # "schema-default visible only".
+    tail_attr = head.GetAttribute("v_sekai:springBone:collider:tail")
+    assert not tail_attr.HasAuthoredValue(), (
+        "sphere collider unexpectedly carries an authored tail")
 
     chest = stage.GetPrimAtPath("/Avatar/Skel_SkelRoot/SpringBones/Collider_ChestCap")
     assert chest.IsValid()

@@ -18,6 +18,11 @@
     SPDX-License-Identifier: MIT
     """
     subLayers = [
+        # Pull in APISchemaBase + other built-in USD schemas so
+        # usdGenSchema can resolve our inherits-from references at
+        # codeless-schema generation time. Resolved via the asset
+        # resolver against the USD core plugins on PXR_PLUGINPATH_NAME.
+        @usd/schema.usda@
     ]
 )
 
