@@ -608,8 +608,18 @@ def _synthesise_spring_prims_from_blob(
                         col_names_kept.append(str(cname))
                         seen.add(cidx)
             if col_indices:
-                prim.CreateAttribute("v_sekai:springBone:colliders",
-                    Sdf.ValueTypeNames.IntArray).Set(col_indices)
+                # The schema declares `v_sekai:springBone:colliders`
+                # as a `rel` (relationship — for engine-side auto-
+                # resolution to collider PRIMS). USD refuses to also
+                # let us author an int[] attribute with the same
+                # name, even with custom=True (the schema slot is
+                # already typed). Use a sibling attribute name
+                # `v_sekai:springBone:colliderIndices` for the wire
+                # format the C ABI consumes (int indices into the
+                # avatar's flat collider table). idtx_import_usd.cpp
+                # reads this attribute name back.
+                prim.CreateAttribute("v_sekai:springBone:colliderIndices",
+                    Sdf.ValueTypeNames.IntArray, custom=True).Set(col_indices)
                 prim.CreateAttribute("v_sekai:springBone:colliderNames",
                     Sdf.ValueTypeNames.TokenArray, custom=True).Set(col_names_kept)
 

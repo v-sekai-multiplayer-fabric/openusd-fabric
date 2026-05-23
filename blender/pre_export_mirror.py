@@ -338,6 +338,37 @@ def _stamp_spring_config_blob(armature_obj: Any, sb: Any) -> None:
         if v is None: v = getattr(j, attr, None)
         return default if v is None else v
 
+    # vrm-addon stores collider / collider_group cross-references as
+    # UUIDs (not names) on the addon-internal list entries:
+    #   group.colliders[i].collider_uuid       -> sb.colliders[*].uuid
+    #   chain.collider_groups[i].collider_group_uuid
+    #                                          -> sb.collider_groups[*].uuid
+    # Build lookup tables so we can resolve those back to display names
+    # before writing the side-channel blob. The user-facing name lives
+    # in a DIFFERENT attribute per type — `display_name` on collider,
+    # `vrm_name` on collider_group. Older addon versions used `name` /
+    # `vrm_name` consistently; we read all three with fallbacks.
+    def _collider_name(c) -> str:
+        for attr in ("vrm_name", "display_name", "name"):
+            v = getattr(c, attr, None)
+            if v: return str(v)
+        return ""
+    def _group_name(g) -> str:
+        for attr in ("vrm_name", "display_name", "name"):
+            v = getattr(g, attr, None)
+            if v: return str(v)
+        return ""
+
+    collider_uuid_to_name: dict[str, str] = {}
+    for col in getattr(sb, "colliders", []):
+        u = getattr(col, "uuid", None)
+        if u: collider_uuid_to_name[str(u)] = _collider_name(col)
+
+    group_uuid_to_name: dict[str, str] = {}
+    for grp in getattr(sb, "collider_groups", []):
+        u = getattr(grp, "uuid", None)
+        if u: group_uuid_to_name[str(u)] = _group_name(grp)
+
     chains: list[dict] = []
     for chain in getattr(sb, "springs", getattr(sb, "spring_bones", [])):
         joints_data: list[dict] = []
@@ -355,13 +386,19 @@ def _stamp_spring_config_blob(armature_obj: Any, sb: Any) -> None:
                 "hitRadius":    float(_from_joint_or_chain(j, chain, "hit_radius",    0.02)),
             })
         if not joints_data: continue
-        # Collider-group references (which colliders this chain hits).
+        # Collider-group references — resolve UUID -> vrm_name, fall
+        # back to the legacy `collider_group_name` attribute on older
+        # addon versions.
         group_refs: list[str] = []
         for gref in getattr(chain, "collider_groups", []):
-            name = getattr(gref, "collider_group_name", None)
-            if name: group_refs.append(str(name))
+            uuid = getattr(gref, "collider_group_uuid", None)
+            if uuid and str(uuid) in group_uuid_to_name:
+                group_refs.append(group_uuid_to_name[str(uuid)])
+                continue
+            legacy = getattr(gref, "collider_group_name", None)
+            if legacy: group_refs.append(str(legacy))
         chains.append({
-            "name":          str(getattr(chain, "vrm_name", "")),
+            "name":          _group_name(chain),
             "joints":        joints_data,
             "colliderGroups": group_refs,
         })
@@ -375,7 +412,7 @@ def _stamp_spring_config_blob(armature_obj: Any, sb: Any) -> None:
         sphere = getattr(shape, "sphere", None) if shape else None
         capsule = getattr(shape, "capsule", None) if shape else None
         entry: dict = {
-            "name":         str(getattr(col, "vrm_name", "")),
+            "name":         _collider_name(col),
             "attachedBone": str(bone_name),
         }
         # vrm-addon's actual discriminator: `col.shape_type` is an
@@ -401,10 +438,14 @@ def _stamp_spring_config_blob(armature_obj: Any, sb: Any) -> None:
     for group in getattr(sb, "collider_groups", []):
         members: list[str] = []
         for entry in getattr(group, "colliders", []):
-            collider_name = getattr(entry, "collider_name", None)
-            if collider_name: members.append(str(collider_name))
+            uuid = getattr(entry, "collider_uuid", None)
+            if uuid and str(uuid) in collider_uuid_to_name:
+                members.append(collider_uuid_to_name[str(uuid)])
+                continue
+            legacy = getattr(entry, "collider_name", None)
+            if legacy: members.append(str(legacy))
         groups_data.append({
-            "name":      str(getattr(group, "vrm_name", "")),
+            "name":      _group_name(group),
             "colliders": members,
         })
 
