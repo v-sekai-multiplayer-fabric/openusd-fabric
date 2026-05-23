@@ -45,3 +45,9 @@ test-hydra = { cmd = "pytest tests/hydra/ -v" }
 # applications. The committed tests/fixtures/mire_essence.usda is
 # the positive-path counterpart.
 fetch-mire = { cmd = "python scripts/fetch_mire.py" }
+# Hydra (hdStorm) render of the SCSS<->MToon comparison fixture.
+# Writes build/renders/hydra_scss_mtoon_compare.png. hdStorm renders the
+# UsdPreviewSurface proxy on each sphere; the VSekaiMToonAPI sidecar
+# attributes are visible to the importer but unrendered until a real
+# MToon Hydra delegate exists.
+render-hydra-compare = { cmd = "usdrecord --defaultTime --imageWidth 1024 tests/fixtures/compare_scss_mtoon.usda build/renders/hydra_scss_mtoon_compare.png", env = { PXR_PLUGINPATH_NAME = "schema" } }

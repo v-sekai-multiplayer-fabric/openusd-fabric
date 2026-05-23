@@ -1,0 +1,104 @@
+#usda 1.0
+(
+    """
+    Render-comparison fixture: two spheres side-by-side, one tagged
+    with VSekaiMToonAPI (Mire-face palette) + the SCSS extension (light
+    ramp etc.), the other a plain UsdPreviewSurface that approximates
+    the same colour for a baseline.
+
+    Used by `pixi run render-hydra-compare` which calls usdrecord
+    against this stage. hdStorm renders the UsdPreviewSurface part
+    natively; the VSekaiMToonAPI payload is sidecar metadata that
+    the future HdVSekaiOutlineJFATask + a planned Mtoon hydra task
+    would consume.
+
+    Copyright 2026 The openusd-fabric authors.
+    SPDX-License-Identifier: MIT
+    """
+    defaultPrim = "Scene"
+    upAxis = "Y"
+    metersPerUnit = 1.0
+)
+
+def Xform "Scene"
+{
+    def Sphere "Sphere_MToon" (
+        prepend apiSchemas = ["MaterialBindingAPI", "VSekaiMToonAPI", "VSekaiMToonScssExtensionAPI"]
+    )
+    {
+        double radius = 0.5
+        float3[] extent = [(-0.5, -0.5, -0.5), (0.5, 0.5, 0.5)]
+        matrix4d xformOp:transform = ( (1,0,0,0), (0,1,0,0), (0,0,1,0), (-0.7, 0.5, 0, 1) )
+        uniform token[] xformOpOrder = ["xformOp:transform"]
+
+        rel material:binding = </Scene/Materials/MToonProxy>
+
+        # MToon (Mire-face palette)
+        color3f v_sekai:mtoon:shadeColorFactor = (0.92, 0.78, 0.73)
+        float v_sekai:mtoon:shadingShiftFactor = -0.06
+        float v_sekai:mtoon:shadingToonyFactor = 0.95
+        float v_sekai:mtoon:giEqualizationFactor = 0.9
+        color3f v_sekai:mtoon:parametricRimColorFactor = (0.4, 0.3, 0.45)
+        float v_sekai:mtoon:parametricRimFresnelPowerFactor = 2.0
+        token v_sekai:mtoon:outlineWidthMode = "screenCoordinates"
+        float v_sekai:mtoon:outlineWidthFactor = 0.0015
+        color3f v_sekai:mtoon:outlineColorFactor = (0.08, 0.05, 0.06)
+
+        # SCSS extension (lossy fields preserved across the bridge)
+        token v_sekai:mtoon:scss:lightRampType = "horizontal"
+        bool v_sekai:mtoon:scss:useAlphaFresnel = false
+        token v_sekai:mtoon:scss:sdfMode = "off"
+    }
+
+    def Sphere "Sphere_PreviewSurface" (
+        prepend apiSchemas = ["MaterialBindingAPI"]
+    )
+    {
+        double radius = 0.5
+        float3[] extent = [(-0.5, -0.5, -0.5), (0.5, 0.5, 0.5)]
+        matrix4d xformOp:transform = ( (1,0,0,0), (0,1,0,0), (0,0,1,0), (0.7, 0.5, 0, 1) )
+        uniform token[] xformOpOrder = ["xformOp:transform"]
+        rel material:binding = </Scene/Materials/PreviewSurface>
+    }
+
+    def Scope "Materials"
+    {
+        # MToon proxy: a UsdPreviewSurface tinted to the Mire face shade.
+        # Real MToon rendering needs an MToon-aware Hydra delegate; this
+        # gives hdStorm something visible at least.
+        def Material "MToonProxy"
+        {
+            token outputs:surface.connect = </Scene/Materials/MToonProxy/Surface.outputs:surface>
+            def Shader "Surface"
+            {
+                uniform token info:id = "UsdPreviewSurface"
+                color3f inputs:diffuseColor = (0.92, 0.78, 0.73)
+                float inputs:roughness = 0.85
+                float inputs:metallic = 0.0
+                token outputs:surface
+            }
+        }
+
+        # Plain neutral PBR sphere for visual baseline.
+        def Material "PreviewSurface"
+        {
+            token outputs:surface.connect = </Scene/Materials/PreviewSurface/Surface.outputs:surface>
+            def Shader "Surface"
+            {
+                uniform token info:id = "UsdPreviewSurface"
+                color3f inputs:diffuseColor = (0.8, 0.8, 0.8)
+                float inputs:roughness = 0.5
+                float inputs:metallic = 0.0
+                token outputs:surface
+            }
+        }
+    }
+
+    def DistantLight "KeyLight"
+    {
+        float inputs:intensity = 800
+        color3f inputs:color = (1.0, 0.96, 0.9)
+        matrix4d xformOp:transform = ( (0.86, 0, -0.5, 0), (0, 1, 0, 0), (0.5, 0, 0.86, 0), (0, 2, 1, 1) )
+        uniform token[] xformOpOrder = ["xformOp:transform"]
+    }
+}
