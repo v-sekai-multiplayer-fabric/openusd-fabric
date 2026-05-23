@@ -1,8 +1,12 @@
 #usda 1.0
+# Curated round-trip fixture. Stays within the libidtx_core handle
+# model surface: avatar root + skeleton + one skinned mesh + one
+# material. Anything richer (composition arcs, material input
+# connections beyond UsdPreviewSurface, V-Sekai-namespace customData
+# on intermediate prims, multiple skeletons) goes in a separate
+# fixture so this one's usdcat --flatten round-trip diff stays at
+# 0 lines.
 (
-    customLayerData = {
-        string note = "Curated round-trip fixture. Stays within the libidtx_core handle model surface: avatar root + skeleton + one skinned mesh + one material. Anything richer (composition arcs, material input connections, V-Sekai-namespace customData, multiple skeletons) goes in a separate fixture so this one's `usdcat --flatten` diff stays at 0 lines through any future round trip."
-    }
     defaultPrim = "Avatar"
     metersPerUnit = 1
     upAxis = "Y"
@@ -34,7 +38,7 @@ def Xform "Avatar" (
     }
 
     def Mesh "Body" (
-        apiSchemas = ["SkelBindingAPI"]
+        apiSchemas = ["MaterialBindingAPI", "SkelBindingAPI"]
     )
     {
         rel material:binding = </Avatar/Body_Mat>
