@@ -482,6 +482,141 @@ def writeFooterFn : SlangFunctionDecl := {
 }
 
 -- ═══════════════════════════════════════════════════════════════════════════
+-- RSCC COMPRESSED ENVELOPE
+-- ═══════════════════════════════════════════════════════════════════════════
+
+/-- write_rscc_header: magic "RSCC" + mode + block_size + total_size.
+    Block sizes array and compressed blocks are written by the C++ host
+    (zstd compression cannot be expressed in Slang). This function writes
+    the fixed envelope prefix. -/
+def writeRsccHeaderFn : SlangFunctionDecl := {
+  name   := "godot_write_rscc_header"
+  params := [
+    { name := "buf",        type := .rwBuf (.scalar .uint) },
+    { name := "offset",     type := .scalar .uint, qualifier := .qInOut },
+    { name := "mode",       type := .scalar .uint },
+    { name := "block_size", type := .scalar .uint },
+    { name := "total_size", type := .scalar .uint }
+  ]
+  body := [
+    -- Magic "RSCC" = 0x43435352 LE
+    .assign (.index (.var "buf") (.var "offset")) (.litUint 0x43435352),
+    .assign (.var "offset") (.bin "+" (.var "offset") (.litUint 4)),
+    .assign (.index (.var "buf") (.var "offset")) (.var "mode"),
+    .assign (.var "offset") (.bin "+" (.var "offset") (.litUint 4)),
+    .assign (.index (.var "buf") (.var "offset")) (.var "block_size"),
+    .assign (.var "offset") (.bin "+" (.var "offset") (.litUint 4)),
+    .assign (.index (.var "buf") (.var "offset")) (.var "total_size"),
+    .assign (.var "offset") (.bin "+" (.var "offset") (.litUint 4))
+  ]
+}
+
+/-- write_rscc_footer: "RSCC" magic repeated at EOF. -/
+def writeRsccFooterFn : SlangFunctionDecl := {
+  name   := "godot_write_rscc_footer"
+  params := [
+    { name := "buf",    type := .rwBuf (.scalar .uint) },
+    { name := "offset", type := .scalar .uint, qualifier := .qInOut }
+  ]
+  body := [
+    .assign (.index (.var "buf") (.var "offset")) (.litUint 0x43435352),
+    .assign (.var "offset") (.bin "+" (.var "offset") (.litUint 4))
+  ]
+}
+
+-- ═══════════════════════════════════════════════════════════════════════════
+-- RESOURCE TABLE WRITERS
+-- ═══════════════════════════════════════════════════════════════════════════
+
+/-- write_string_table_header: uint32 count of strings. -/
+def writeStringTableHeaderFn : SlangFunctionDecl := {
+  name   := "godot_write_string_table_header"
+  params := [
+    { name := "buf",    type := .rwBuf (.scalar .uint) },
+    { name := "offset", type := .scalar .uint, qualifier := .qInOut },
+    { name := "count",  type := .scalar .uint }
+  ]
+  body := [
+    .assign (.index (.var "buf") (.var "offset")) (.var "count"),
+    .assign (.var "offset") (.bin "+" (.var "offset") (.litUint 4))
+  ]
+}
+
+/-- write_ext_resource_count: uint32 count of external resources. -/
+def writeExtResourceCountFn : SlangFunctionDecl := {
+  name   := "godot_write_ext_resource_count"
+  params := [
+    { name := "buf",    type := .rwBuf (.scalar .uint) },
+    { name := "offset", type := .scalar .uint, qualifier := .qInOut },
+    { name := "count",  type := .scalar .uint }
+  ]
+  body := [
+    .assign (.index (.var "buf") (.var "offset")) (.var "count"),
+    .assign (.var "offset") (.bin "+" (.var "offset") (.litUint 4))
+  ]
+}
+
+/-- write_int_resource_count: uint32 count of internal resources. -/
+def writeIntResourceCountFn : SlangFunctionDecl := {
+  name   := "godot_write_int_resource_count"
+  params := [
+    { name := "buf",    type := .rwBuf (.scalar .uint) },
+    { name := "offset", type := .scalar .uint, qualifier := .qInOut },
+    { name := "count",  type := .scalar .uint }
+  ]
+  body := [
+    .assign (.index (.var "buf") (.var "offset")) (.var "count"),
+    .assign (.var "offset") (.bin "+" (.var "offset") (.litUint 4))
+  ]
+}
+
+/-- write_resource_data_header: type string + property count.
+    Type string written via godot_write_string by the host;
+    this writes just the property count that follows. -/
+def writeResourcePropertyCountFn : SlangFunctionDecl := {
+  name   := "godot_write_resource_property_count"
+  params := [
+    { name := "buf",    type := .rwBuf (.scalar .uint) },
+    { name := "offset", type := .scalar .uint, qualifier := .qInOut },
+    { name := "count",  type := .scalar .uint }
+  ]
+  body := [
+    .assign (.index (.var "buf") (.var "offset")) (.var "count"),
+    .assign (.var "offset") (.bin "+" (.var "offset") (.litUint 4))
+  ]
+}
+
+/-- write_property_name_idx: uint32 string table index for property name. -/
+def writePropertyNameIdxFn : SlangFunctionDecl := {
+  name   := "godot_write_property_name_idx"
+  params := [
+    { name := "buf",    type := .rwBuf (.scalar .uint) },
+    { name := "offset", type := .scalar .uint, qualifier := .qInOut },
+    { name := "idx",    type := .scalar .uint }
+  ]
+  body := [
+    .assign (.index (.var "buf") (.var "offset")) (.var "idx"),
+    .assign (.var "offset") (.bin "+" (.var "offset") (.litUint 4))
+  ]
+}
+
+/-- write_reserved_fields: 11× uint32 zeros. -/
+def writeReservedFieldsFn : SlangFunctionDecl := {
+  name   := "godot_write_reserved_fields"
+  params := [
+    { name := "buf",    type := .rwBuf (.scalar .uint) },
+    { name := "offset", type := .scalar .uint, qualifier := .qInOut }
+  ]
+  body := [
+    .forCount "i" (.litUint 0) (.litUint 11) [
+      .assign (.index (.var "buf") (.bin "+" (.var "offset")
+          (.bin "*" (.var "i") (.litUint 4)))) (.litUint 0)
+    ],
+    .assign (.var "offset") (.bin "+" (.var "offset") (.litUint 44))
+  ]
+}
+
+-- ═══════════════════════════════════════════════════════════════════════════
 -- MODULE ASSEMBLY
 -- ═══════════════════════════════════════════════════════════════════════════
 
@@ -511,7 +646,15 @@ def godotScnModule : SlangShaderModule := {
     writeObjectInternalFn,
     writeObjectExtIndexFn,
     writeHeaderFn,
-    writeFooterFn
+    writeFooterFn,
+    writeRsccHeaderFn,
+    writeRsccFooterFn,
+    writeStringTableHeaderFn,
+    writeExtResourceCountFn,
+    writeIntResourceCountFn,
+    writeResourcePropertyCountFn,
+    writePropertyNameIdxFn,
+    writeReservedFieldsFn
   ]
 }
 
