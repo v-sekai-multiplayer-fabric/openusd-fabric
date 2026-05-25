@@ -190,6 +190,298 @@ def writeHeaderFn : SlangFunctionDecl := {
 }
 
 -- ═══════════════════════════════════════════════════════════════════════════
+-- STRING WRITER
+-- ═══════════════════════════════════════════════════════════════════════════
+
+/-- write_string: uint32 length + UTF-8 bytes packed into uint32s + padding.
+    Slang CPU target: caller passes a StructuredBuffer<uint> of packed chars
+    and the byte length. Padding to 4-byte alignment is handled here. -/
+def writeStringFn : SlangFunctionDecl := {
+  name   := "godot_write_string"
+  params := [
+    { name := "buf",      type := .rwBuf (.scalar .uint) },
+    { name := "offset",   type := .scalar .uint, qualifier := .qInOut },
+    { name := "str_data", type := .roBuf (.scalar .uint) },
+    { name := "str_len",  type := .scalar .uint }
+  ]
+  body := [
+    -- write length prefix
+    .assign (.index (.var "buf") (.var "offset")) (.var "str_len"),
+    .assign (.var "offset") (.bin "+" (.var "offset") (.litUint 4)),
+    -- copy packed uint32 words: ceil(str_len / 4) words
+    .declInit (.scalar .uint) "word_count"
+        (.bin "/" (.bin "+" (.var "str_len") (.litUint 3)) (.litUint 4)),
+    .forCount "w" (.litUint 0) (.var "word_count") [
+      .assign (.index (.var "buf") (.bin "+" (.var "offset")
+          (.bin "*" (.var "w") (.litUint 4))))
+        (.index (.var "str_data") (.var "w"))
+    ],
+    -- advance offset by word_count * 4 (includes padding)
+    .assign (.var "offset") (.bin "+" (.var "offset")
+        (.bin "*" (.var "word_count") (.litUint 4)))
+  ]
+}
+
+-- ═══════════════════════════════════════════════════════════════════════════
+-- DICTIONARY / ARRAY / PACKED ARRAY WRITERS
+-- ═══════════════════════════════════════════════════════════════════════════
+
+/-- write_dict_header: tag(26) + uint32 count. Caller writes key/value pairs after. -/
+def writeDictHeaderFn : SlangFunctionDecl := {
+  name   := "godot_write_dict_header"
+  params := [
+    { name := "buf",    type := .rwBuf (.scalar .uint) },
+    { name := "offset", type := .scalar .uint, qualifier := .qInOut },
+    { name := "count",  type := .scalar .uint }
+  ]
+  body := [
+    .assign (.index (.var "buf") (.var "offset")) (.litUint 26),
+    .assign (.var "offset") (.bin "+" (.var "offset") (.litUint 4)),
+    .assign (.index (.var "buf") (.var "offset")) (.var "count"),
+    .assign (.var "offset") (.bin "+" (.var "offset") (.litUint 4))
+  ]
+}
+
+/-- write_array_header: tag(30) + uint32 count. Caller writes elements after. -/
+def writeArrayHeaderFn : SlangFunctionDecl := {
+  name   := "godot_write_array_header"
+  params := [
+    { name := "buf",    type := .rwBuf (.scalar .uint) },
+    { name := "offset", type := .scalar .uint, qualifier := .qInOut },
+    { name := "count",  type := .scalar .uint }
+  ]
+  body := [
+    .assign (.index (.var "buf") (.var "offset")) (.litUint 30),
+    .assign (.var "offset") (.bin "+" (.var "offset") (.litUint 4)),
+    .assign (.index (.var "buf") (.var "offset")) (.var "count"),
+    .assign (.var "offset") (.bin "+" (.var "offset") (.litUint 4))
+  ]
+}
+
+/-- write_packed_int32_array: tag(32) + count + count×int32.
+    Data passed as a StructuredBuffer<uint>. -/
+def writePackedInt32ArrayFn : SlangFunctionDecl := {
+  name   := "godot_write_packed_int32_array"
+  params := [
+    { name := "buf",    type := .rwBuf (.scalar .uint) },
+    { name := "offset", type := .scalar .uint, qualifier := .qInOut },
+    { name := "data",   type := .roBuf (.scalar .uint) },
+    { name := "count",  type := .scalar .uint }
+  ]
+  body := [
+    .assign (.index (.var "buf") (.var "offset")) (.litUint 32),
+    .assign (.var "offset") (.bin "+" (.var "offset") (.litUint 4)),
+    .assign (.index (.var "buf") (.var "offset")) (.var "count"),
+    .assign (.var "offset") (.bin "+" (.var "offset") (.litUint 4)),
+    .forCount "i" (.litUint 0) (.var "count") [
+      .assign (.index (.var "buf") (.bin "+" (.var "offset")
+          (.bin "*" (.var "i") (.litUint 4))))
+        (.index (.var "data") (.var "i"))
+    ],
+    .assign (.var "offset") (.bin "+" (.var "offset")
+        (.bin "*" (.var "count") (.litUint 4)))
+  ]
+}
+
+/-- write_packed_string_array: tag(34) + count, then count×string.
+    Each string is stored via godot_write_string. This is a declaration only —
+    the body calls godot_write_string in a loop (modeled as a tag+count header;
+    actual per-string calls happen in the C++ host). -/
+def writePackedStringArrayHeaderFn : SlangFunctionDecl := {
+  name   := "godot_write_packed_string_array_header"
+  params := [
+    { name := "buf",    type := .rwBuf (.scalar .uint) },
+    { name := "offset", type := .scalar .uint, qualifier := .qInOut },
+    { name := "count",  type := .scalar .uint }
+  ]
+  body := [
+    .assign (.index (.var "buf") (.var "offset")) (.litUint 34),
+    .assign (.var "offset") (.bin "+" (.var "offset") (.litUint 4)),
+    .assign (.index (.var "buf") (.var "offset")) (.var "count"),
+    .assign (.var "offset") (.bin "+" (.var "offset") (.litUint 4))
+  ]
+}
+
+/-- write_packed_float32_array: tag(33) + count + count×float32. -/
+def writePackedFloat32ArrayFn : SlangFunctionDecl := {
+  name   := "godot_write_packed_float32_array"
+  params := [
+    { name := "buf",    type := .rwBuf (.scalar .uint) },
+    { name := "offset", type := .scalar .uint, qualifier := .qInOut },
+    { name := "data",   type := .roBuf (.scalar .float) },
+    { name := "count",  type := .scalar .uint }
+  ]
+  body := [
+    .assign (.index (.var "buf") (.var "offset")) (.litUint 33),
+    .assign (.var "offset") (.bin "+" (.var "offset") (.litUint 4)),
+    .assign (.index (.var "buf") (.var "offset")) (.var "count"),
+    .assign (.var "offset") (.bin "+" (.var "offset") (.litUint 4)),
+    .forCount "i" (.litUint 0) (.var "count") [
+      .assign (.index (.var "buf") (.bin "+" (.var "offset")
+          (.bin "*" (.var "i") (.litUint 4))))
+        (.call "asuint" [.index (.var "data") (.var "i")])
+    ],
+    .assign (.var "offset") (.bin "+" (.var "offset")
+        (.bin "*" (.var "count") (.litUint 4)))
+  ]
+}
+
+-- ═══════════════════════════════════════════════════════════════════════════
+-- OBJECT REFERENCE WRITERS
+-- ═══════════════════════════════════════════════════════════════════════════
+
+/-- write_object_internal: tag(24) + subtype(2) + string path. -/
+def writeObjectInternalFn : SlangFunctionDecl := {
+  name   := "godot_write_object_internal"
+  params := [
+    { name := "buf",      type := .rwBuf (.scalar .uint) },
+    { name := "offset",   type := .scalar .uint, qualifier := .qInOut },
+    { name := "path_data", type := .roBuf (.scalar .uint) },
+    { name := "path_len", type := .scalar .uint }
+  ]
+  body := [
+    -- VARIANT_OBJECT tag
+    .assign (.index (.var "buf") (.var "offset")) (.litUint 24),
+    .assign (.var "offset") (.bin "+" (.var "offset") (.litUint 4)),
+    -- OBJECT_INTERNAL_RESOURCE subtype = 2
+    .assign (.index (.var "buf") (.var "offset")) (.litUint 2),
+    .assign (.var "offset") (.bin "+" (.var "offset") (.litUint 4)),
+    -- path string (inline — same logic as godot_write_string but without tag)
+    .assign (.index (.var "buf") (.var "offset")) (.var "path_len"),
+    .assign (.var "offset") (.bin "+" (.var "offset") (.litUint 4)),
+    .declInit (.scalar .uint) "wc"
+        (.bin "/" (.bin "+" (.var "path_len") (.litUint 3)) (.litUint 4)),
+    .forCount "w" (.litUint 0) (.var "wc") [
+      .assign (.index (.var "buf") (.bin "+" (.var "offset")
+          (.bin "*" (.var "w") (.litUint 4))))
+        (.index (.var "path_data") (.var "w"))
+    ],
+    .assign (.var "offset") (.bin "+" (.var "offset")
+        (.bin "*" (.var "wc") (.litUint 4)))
+  ]
+}
+
+/-- write_object_ext_index: tag(24) + subtype(3) + uint32 index. -/
+def writeObjectExtIndexFn : SlangFunctionDecl := {
+  name   := "godot_write_object_ext_index"
+  params := [
+    { name := "buf",    type := .rwBuf (.scalar .uint) },
+    { name := "offset", type := .scalar .uint, qualifier := .qInOut },
+    { name := "idx",    type := .scalar .uint }
+  ]
+  body := [
+    .assign (.index (.var "buf") (.var "offset")) (.litUint 24),
+    .assign (.var "offset") (.bin "+" (.var "offset") (.litUint 4)),
+    .assign (.index (.var "buf") (.var "offset")) (.litUint 3),
+    .assign (.var "offset") (.bin "+" (.var "offset") (.litUint 4)),
+    .assign (.index (.var "buf") (.var "offset")) (.var "idx"),
+    .assign (.var "offset") (.bin "+" (.var "offset") (.litUint 4))
+  ]
+}
+
+/-- write_nil: just the tag(1). -/
+def writeNilFn : SlangFunctionDecl := {
+  name   := "godot_write_nil"
+  params := [
+    { name := "buf",    type := .rwBuf (.scalar .uint) },
+    { name := "offset", type := .scalar .uint, qualifier := .qInOut }
+  ]
+  body := [
+    .assign (.index (.var "buf") (.var "offset")) (.litUint 1),
+    .assign (.var "offset") (.bin "+" (.var "offset") (.litUint 4))
+  ]
+}
+
+/-- write_bool: tag(2) + uint32 (0 or 1). -/
+def writeBoolFn : SlangFunctionDecl := {
+  name   := "godot_write_bool"
+  params := [
+    { name := "buf",    type := .rwBuf (.scalar .uint) },
+    { name := "offset", type := .scalar .uint, qualifier := .qInOut },
+    { name := "value",  type := .scalar .uint }
+  ]
+  body := [
+    .assign (.index (.var "buf") (.var "offset")) (.litUint 2),
+    .assign (.var "offset") (.bin "+" (.var "offset") (.litUint 4)),
+    .assign (.index (.var "buf") (.var "offset")) (.var "value"),
+    .assign (.var "offset") (.bin "+" (.var "offset") (.litUint 4))
+  ]
+}
+
+/-- write_int: tag(3) + int32. -/
+def writeIntFn : SlangFunctionDecl := {
+  name   := "godot_write_int"
+  params := [
+    { name := "buf",    type := .rwBuf (.scalar .uint) },
+    { name := "offset", type := .scalar .uint, qualifier := .qInOut },
+    { name := "value",  type := .scalar .int }
+  ]
+  body := [
+    .assign (.index (.var "buf") (.var "offset")) (.litUint 3),
+    .assign (.var "offset") (.bin "+" (.var "offset") (.litUint 4)),
+    .assign (.index (.var "buf") (.var "offset")) (.call "asuint" [.var "value"]),
+    .assign (.var "offset") (.bin "+" (.var "offset") (.litUint 4))
+  ]
+}
+
+/-- write_color: tag(20) + 4×float32 (r,g,b,a). -/
+def writeColorFn : SlangFunctionDecl := {
+  name   := "godot_write_color"
+  params := [
+    { name := "buf",    type := .rwBuf (.scalar .uint) },
+    { name := "offset", type := .scalar .uint, qualifier := .qInOut },
+    { name := "c",      type := .vec .float 4 }
+  ]
+  body := [
+    .assign (.index (.var "buf") (.var "offset")) (.litUint 20),
+    .assign (.var "offset") (.bin "+" (.var "offset") (.litUint 4)),
+    .assign (.index (.var "buf") (.var "offset")) (.call "asuint" [.member (.var "c") "x"]),
+    .assign (.var "offset") (.bin "+" (.var "offset") (.litUint 4)),
+    .assign (.index (.var "buf") (.var "offset")) (.call "asuint" [.member (.var "c") "y"]),
+    .assign (.var "offset") (.bin "+" (.var "offset") (.litUint 4)),
+    .assign (.index (.var "buf") (.var "offset")) (.call "asuint" [.member (.var "c") "z"]),
+    .assign (.var "offset") (.bin "+" (.var "offset") (.litUint 4)),
+    .assign (.index (.var "buf") (.var "offset")) (.call "asuint" [.member (.var "c") "w"]),
+    .assign (.var "offset") (.bin "+" (.var "offset") (.litUint 4))
+  ]
+}
+
+/-- write_quaternion: tag(14) + 4×float32 (x,y,z,w). -/
+def writeQuaternionFn : SlangFunctionDecl := {
+  name   := "godot_write_quaternion"
+  params := [
+    { name := "buf",    type := .rwBuf (.scalar .uint) },
+    { name := "offset", type := .scalar .uint, qualifier := .qInOut },
+    { name := "q",      type := .vec .float 4 }
+  ]
+  body := [
+    .assign (.index (.var "buf") (.var "offset")) (.litUint 14),
+    .assign (.var "offset") (.bin "+" (.var "offset") (.litUint 4)),
+    .assign (.index (.var "buf") (.var "offset")) (.call "asuint" [.member (.var "q") "x"]),
+    .assign (.var "offset") (.bin "+" (.var "offset") (.litUint 4)),
+    .assign (.index (.var "buf") (.var "offset")) (.call "asuint" [.member (.var "q") "y"]),
+    .assign (.var "offset") (.bin "+" (.var "offset") (.litUint 4)),
+    .assign (.index (.var "buf") (.var "offset")) (.call "asuint" [.member (.var "q") "z"]),
+    .assign (.var "offset") (.bin "+" (.var "offset") (.litUint 4)),
+    .assign (.index (.var "buf") (.var "offset")) (.call "asuint" [.member (.var "q") "w"]),
+    .assign (.var "offset") (.bin "+" (.var "offset") (.litUint 4))
+  ]
+}
+
+/-- write_footer: "RSRC" magic at end = 0x43525352 LE. -/
+def writeFooterFn : SlangFunctionDecl := {
+  name   := "godot_write_footer"
+  params := [
+    { name := "buf",    type := .rwBuf (.scalar .uint) },
+    { name := "offset", type := .scalar .uint, qualifier := .qInOut }
+  ]
+  body := [
+    .assign (.index (.var "buf") (.var "offset")) (.litUint 0x43525352),
+    .assign (.var "offset") (.bin "+" (.var "offset") (.litUint 4))
+  ]
+}
+
+-- ═══════════════════════════════════════════════════════════════════════════
 -- MODULE ASSEMBLY
 -- ═══════════════════════════════════════════════════════════════════════════
 
@@ -203,9 +495,23 @@ def godotScnModule : SlangShaderModule := {
     storeU64Fn,
     storeFloatFn,
     writeVariantTagFn,
+    writeNilFn,
+    writeBoolFn,
+    writeIntFn,
     writeVector3Fn,
+    writeQuaternionFn,
+    writeColorFn,
     writeTransform3DFn,
-    writeHeaderFn
+    writeStringFn,
+    writeDictHeaderFn,
+    writeArrayHeaderFn,
+    writePackedInt32ArrayFn,
+    writePackedFloat32ArrayFn,
+    writePackedStringArrayHeaderFn,
+    writeObjectInternalFn,
+    writeObjectExtIndexFn,
+    writeHeaderFn,
+    writeFooterFn
   ]
 }
 
