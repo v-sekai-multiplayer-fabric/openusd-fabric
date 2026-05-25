@@ -193,9 +193,10 @@ def writeHeaderFn : SlangFunctionDecl := {
 -- STRING WRITER
 -- ═══════════════════════════════════════════════════════════════════════════
 
-/-- write_string: uint32 length + UTF-8 bytes packed into uint32s + padding.
-    Slang CPU target: caller passes a StructuredBuffer<uint> of packed chars
-    and the byte length. Padding to 4-byte alignment is handled here. -/
+/-- write_string: uint32 length + raw UTF-8 bytes (NO padding).
+    Length includes null terminator. Caller passes packed uint32 words
+    and the byte length (including null). No alignment padding.
+    Source: save_unicode_string stores utf8.length()+1 bytes raw. -/
 def writeStringFn : SlangFunctionDecl := {
   name   := "godot_write_string"
   params := [
@@ -205,7 +206,7 @@ def writeStringFn : SlangFunctionDecl := {
     { name := "str_len",  type := .scalar .uint }
   ]
   body := [
-    -- write length prefix
+    -- write length prefix (includes null terminator in count)
     .assign (.index (.var "buf") (.var "offset")) (.var "str_len"),
     .assign (.var "offset") (.bin "+" (.var "offset") (.litUint 4)),
     -- copy packed uint32 words: ceil(str_len / 4) words
@@ -216,9 +217,8 @@ def writeStringFn : SlangFunctionDecl := {
           (.bin "*" (.var "w") (.litUint 4))))
         (.index (.var "str_data") (.var "w"))
     ],
-    -- advance offset by word_count * 4 (includes padding)
-    .assign (.var "offset") (.bin "+" (.var "offset")
-        (.bin "*" (.var "word_count") (.litUint 4)))
+    -- advance offset by exact byte count (NO padding — Godot does not pad strings)
+    .assign (.var "offset") (.bin "+" (.var "offset") (.var "str_len"))
   ]
 }
 
