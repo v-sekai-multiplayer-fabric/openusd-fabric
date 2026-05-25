@@ -8,3 +8,4 @@
 import Fabric.Schema
 import Fabric.VrmUpgrade
 import Fabric.Mesh
+import Fabric.Serialization

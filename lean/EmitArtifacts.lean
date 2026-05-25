@@ -41,6 +41,8 @@ private def artifacts : List (String × String) :=
     , Fabric.Mesh.TrisToQuadsGPU.slangSource )
   , ( "shaders/jfa_step.slang"
     , Fabric.Mesh.OutlineJFA.jfaStepSlangSource )
+  , ( "shaders/godot_scn.slang"
+    , Fabric.Serialization.GodotScn.slangSource )
   ]
 
 def main (args : List String) : IO UInt32 := do
